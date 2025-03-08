@@ -1,4 +1,4 @@
-import type { Probot, Context } from "probot";
+import type { Probot } from "probot";
 import { getCommitDetails, getFileContent, getCommitsInPR, compareCommits } from "./services/github.js";
 import { createDocumentationSuggestions } from "./ai/suggestions.js";
 import type { CommitFile } from "./types/index.js";

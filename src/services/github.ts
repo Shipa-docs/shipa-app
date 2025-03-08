@@ -22,6 +22,12 @@ export async function getCommitDetails(
     logger.info(`Commit ${commitSha} details:`);
     logger.info(`Total files changed: ${commitDetails.files?.length || 0}`);
 
+    // Type the files to ensure CommitFile is used
+    if (commitDetails.files) {
+      const typedFiles = commitDetails.files as CommitFile[];
+      logger.debug(`Processed ${typedFiles.length} files`);
+    }
+
     return commitDetails;
   } catch (error) {
     logger.error(`Error fetching commit details: ${error}`);

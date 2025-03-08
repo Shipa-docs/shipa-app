@@ -55,6 +55,15 @@ PRIVATE_KEY=
 OPENAI_API_KEY=
 ```
 
+## Troubleshooting
+
+If you encounter TypeScript compilation errors related to missing types, ensure you have all required type definitions installed:
+
+```bash
+# Install required type definitions
+npm install --save-dev @types/json-schema
+```
+
 ## How It Works
 
 1. The app listens for pull request synchronize events and push events
