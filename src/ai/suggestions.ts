@@ -63,11 +63,6 @@ export async function createDocumentationSuggestions(
     // Parse the patch to find added or modified lines
     const lines = patch.split("\n");
     const suggestions: DocSuggestion[] = [];
-    console.log({
-      lines,
-      patch
-    });
-    return 0;
     // Process each line in the patch
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];

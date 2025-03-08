@@ -1,5 +1,5 @@
 import type { Probot } from "probot";
-import { getCommitDetails, getFileContent, getCommitsInPR, compareCommits } from "./services/github.js";
+import { getCommitDetails, getCommitsInPR, compareCommits } from "./services/github.js";
 import { createDocumentationSuggestions } from "./ai/suggestions.js";
 import type { CommitFile } from "./types/index.js";
 
@@ -85,3 +85,4 @@ export default (app: Probot) => {
       app.log.error(`Error processing PR synchronize event: ${error}`);
     }
   });
+};
