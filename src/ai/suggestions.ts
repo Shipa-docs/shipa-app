@@ -1,14 +1,54 @@
 import type { Context } from "probot";
 import { generateText } from "ai";
-//import {ollama} from "ollama-ai-provider";
 import { openai } from "@ai-sdk/openai";
 
 import type { DocSuggestion, Logger } from "../types/index.js";
 import { createReviewComment } from "../services/github.js";
 
+const PROMPT_BASE = `<internal_reminder>
+
+1. <docbuddy_info>
+    - DocBuddy is an advanced documentation improvement assistant.
+    - DocBuddy analyzes code documentation to provide improved versions.
+    - DocBuddy focuses on clarity, conciseness, and technical accuracy.
+    - DocBuddy maintains the original meaning while enhancing readability.
+    - DocBuddy has knowledge of various programming languages, frameworks, and documentation standards.
+2. <docbuddy_capabilities>
+    - Analyzes documentation text to identify areas for improvement.
+    - Enhances clarity without changing technical meaning.
+    - Eliminates redundancies and improves structure.
+    - Standardizes formatting according to best practices.
+    - Respects original document length constraints.
+3. <docbuddy_response_format>
+    - DocBuddy MUST return ONLY the improved version of the text.
+    - NO explanations, greetings, or meta-commentary allowed.
+    - The response should be ready to directly replace the original text.
+    - The improved text appears as the "green" addition in a diff view.
+    - Response should not be significantly longer than the original text.
+4. <docbuddy_guidelines>
+    - ALWAYS prioritize clarity over brevity when both conflict.
+    - MAINTAIN domain-specific technical terminology.
+    - PRESERVE the complete meaning of the original text.
+    - IMPROVE the structure of long sentences by dividing them when appropriate.
+    - ELIMINATE redundancies and superfluous text.
+    - ENSURE parameters, return values, and exceptions are fully documented when present.
+    - STANDARDIZE documentation format according to project conventions.
+    - RESPECT the original length, avoiding significant expansion of the text.
+5. <forming_correct_responses>
+    - NEVER include any text that is not part of the improved documentation.
+    - DO NOT include explanations about why changes were made.
+    - DO NOT prefix or suffix the response with anything.
+    - If no improvements are possible, return the original text unchanged.
+    - The entire response will be used verbatim as the suggested improvement.
+    - Treat every input as documentation that needs improvement, not as a conversation.
+
+</internal_reminder>
+
+This is the text you should review:`;
 /**
  * Analyzes a patch and generates AI-powered improvement suggestions for documentation
  */
+
 export async function createDocumentationSuggestions(
   context: Context,
   owner: string,
@@ -21,7 +61,7 @@ export async function createDocumentationSuggestions(
 ) {
   try {
     // Parse the patch to find added or modified lines
-    const lines = patch.split('\n');
+    const lines = patch.split("\n");
     const suggestions: DocSuggestion[] = [];
     console.log({
       lines,
@@ -33,7 +73,7 @@ export async function createDocumentationSuggestions(
       const line = lines[i];
 
       // Look for lines that start with '+' (added/modified) but not metadata lines (+++/---)
-      if (line.startsWith('+') && !line.startsWith('+++')) {
+      if (line.startsWith("+") && !line.startsWith("+++")) {
         // Get the line without the '+' prefix
         const codeLine = line.substring(1);
 
@@ -42,16 +82,16 @@ export async function createDocumentationSuggestions(
           try {
             // Use AI to improve the documentation
             const { text } = await generateText({
-              model: openai("gpt-4o-mini"),
-              
-              prompt: `improve this docs changes: ${codeLine}`
+              model: openai("gpt-4"),
+              system: PROMPT_BASE,
+              prompt: `${codeLine}`,
             });
 
             // Create the suggestion with the AI improvement
             suggestions.push({
               line: i,
               content: text,
-              originalLine: codeLine
+              originalLine: codeLine,
             });
           } catch (aiError) {
             logger.error(`Error generating AI improvement: ${aiError}`);
@@ -62,7 +102,9 @@ export async function createDocumentationSuggestions(
 
     // If there are suggestions to make
     if (suggestions.length > 0) {
-      logger.info(`Creating ${suggestions.length} documentation improvement suggestions for file ${filePath}`);
+      logger.info(
+        `Creating ${suggestions.length} documentation improvement suggestions for file ${filePath}`
+      );
 
       // For each suggestion, create a comment in the PR review
       for (const suggestion of suggestions) {
@@ -102,10 +144,10 @@ export async function createDocumentationSuggestions(
 function isDocumentation(line: string): boolean {
   const trimmed = line.trim();
   return (
-    trimmed.startsWith('//') ||
-    trimmed.startsWith('/*') ||
-    trimmed.startsWith('*') ||
-    trimmed.startsWith('#')
+    trimmed.startsWith("//") ||
+    trimmed.startsWith("/*") ||
+    trimmed.startsWith("*") ||
+    trimmed.startsWith("#")
   );
 }
 
@@ -116,12 +158,12 @@ function calculatePositionInFile(lines: string[], lineIndex: number): number {
   let position = 1;
 
   for (let j = 0; j <= lineIndex; j++) {
-    if (lines[j]?.startsWith('@@ ')) {
+    if (lines[j]?.startsWith("@@ ")) {
       const match = lines[j].match(/@@ -\d+,\d+ \+(\d+),\d+ @@/);
       if (match?.[1]) {
         position = Number.parseInt(match[1], 10) - 1;
       }
-    } else if (!lines[j]?.startsWith('-')) {
+    } else if (!lines[j]?.startsWith("-")) {
       position++;
     }
   }
@@ -134,9 +176,9 @@ function calculatePositionInFile(lines: string[], lineIndex: number): number {
  */
 function formatSuggestionComment(content: string): string {
   return [
-    'Documentation improvement suggestion:',
-    '```suggestion',
+    "Documentation improvement suggestion:",
+    "```suggestion",
     content,
-    '```'
-  ].join('\n');
-} 
+    "```",
+  ].join("\n");
+}
