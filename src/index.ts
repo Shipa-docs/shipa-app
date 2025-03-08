@@ -35,20 +35,58 @@ export default (app: Probot) => {
       app.log.info(`Total files changed: ${commitDetails.files?.length || 0}`);
 
       // Log details of each changed file
-      commitDetails.files?.forEach((file: CommitFile, index: number) => {
-        app.log.info(`File #${index + 1}: ${file.filename}`);
-        app.log.info(`Status: ${file.status}`); // added, modified, removed
-        app.log.info(`Changes: +${file.additions} -${file.deletions}`);
+      if (commitDetails.files && commitDetails.files.length > 0) {
+        for (const file of commitDetails.files as CommitFile[]) {
+          app.log.info(`File: ${file.filename}`);
+          app.log.info(`Status: ${file.status}`); // added, modified, removed
+          app.log.info(`Changes: +${file.additions} -${file.deletions}`);
 
-        // Log a sample of the patch if it exists
-        if (file.patch) {
-          app.log.info(`Patch preview: ${file.patch.substring(0, 200)}${file.patch.length > 200 ? '...' : ''}`);
+          // Log a sample of the patch if it exists
+          if (file.patch) {
+            app.log.info(`Patch preview: ${file.patch.substring(0, 200)}${file.patch.length > 200 ? '...' : ''}`);
+          }
+
+          // Get the full content of the file in this commit
+          if (file.status !== 'removed') {
+            await getFileContent(context, owner, repo, commitSha, file.filename);
+          }
         }
-      });
+      }
 
       return commitDetails;
     } catch (error) {
       app.log.error(`Error fetching commit details: ${error}`);
+      return null;
+    }
+  }
+
+  // Helper function to get the full content of a file in a specific commit
+  async function getFileContent(context: Context, owner: string, repo: string, commitSha: string, filePath: string) {
+    try {
+      // Get the content of the file at this specific commit
+      const { data: fileData } = await context.octokit.repos.getContent({
+        owner,
+        repo,
+        path: filePath,
+        ref: commitSha,
+      });
+
+      app.log.info(`Obteniendo contenido completo de: ${filePath} en commit ${commitSha}`);
+
+      // The content is base64 encoded
+      if ('content' in fileData && typeof fileData.content === 'string') {
+        const content = Buffer.from(fileData.content, 'base64').toString('utf-8');
+        app.log.info('Contenido completo del archivo (primeras 300 caracteres):');
+        app.log.info(content.substring(0, 300) + (content.length > 300 ? '...' : ''));
+
+        // You could save this to a file, database, or return it
+        return content;
+      }
+
+      app.log.info('No se pudo obtener el contenido del archivo (probablemente es un directorio o archivo binario)');
+      return null;
+    } catch (error) {
+      app.log.error(`Error obteniendo contenido del archivo ${filePath}: ${error}`);
       return null;
     }
   }
