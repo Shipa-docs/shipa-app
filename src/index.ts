@@ -1,275 +1,92 @@
-import type { Probot } from "probot";
-import type { Context } from "probot";
-import { generateText } from "ai"
-import { openai } from "@ai-sdk/openai"
+import type { Probot, Context } from "probot";
+import { getCommitDetails, getFileContent, getCommitsInPR, compareCommits } from "./services/github.js";
+import { createDocumentationSuggestions } from "./ai/suggestions.js";
+import type { CommitFile } from "./types/index.js";
 
-// Interfaces para los tipos
-interface CommitFile {
-  filename: string;
-  status: string;
-  additions: number;
-  deletions: number;
-  patch?: string;
-}
-
-// Array de emojis para usar en las sugerencias
-// const emojis = ["✅", "🚀", "👍", "🎉", "🔥", "💯", "⭐", "🌟", "💪", "👏"];
-
+/**
+ * Main application entry point
+ */
 export default (app: Probot) => {
-  // Log all events received by the bot
   app.log.info("Starting the bot...");
 
-  // Log webhooks in a simpler way
+  // Simplified logging of events
   app.onAny(async (context) => {
     app.log.info(`Received event: ${context.name}`);
-    app.log.info(`Payload: ${JSON.stringify(context.payload)}`);
-    app.log.info(`Repository: ${context}`);
   });
 
-  // Helper function to get commit details
-  async function getCommitDetails(context: Context, owner: string, repo: string, commitSha: string) {
-    try {
-      // Get detailed commit information including files changed
-      const { data: commitDetails } = await context.octokit.repos.getCommit({
-        owner,
-        repo,
-        ref: commitSha,
-      });
-
-      app.log.info(`Commit ${commitSha} details:`);
-      app.log.info(`Total files changed: ${commitDetails.files?.length || 0}`);
-
-      // Log details of each changed file
-      if (commitDetails.files && commitDetails.files.length > 0) {
-        for (const file of commitDetails.files as CommitFile[]) {
-          app.log.info(`File: ${file.filename}`);
-          app.log.info(`Status: ${file.status}`); // added, modified, removed
-          app.log.info(`Changes: +${file.additions} -${file.deletions}`);
-
-          // Log a sample of the patch if it exists
-          if (file.patch) {
-            app.log.info(`Patch preview: ${file.patch.substring(0, 200)}${file.patch.length > 200 ? '...' : ''}`);
-          }
-
-          // Get the full content of the file in this commit
-          if (file.status !== 'removed') {
-            await getFileContent(context, owner, repo, commitSha, file.filename);
-          }
-        }
-      }
-
-      return commitDetails;
-    } catch (error) {
-      app.log.error(`Error fetching commit details: ${error}`);
-      return null;
-    }
-  }
-
-  // Helper function to get the full content of a file in a specific commit
-  async function getFileContent(context: Context, owner: string, repo: string, commitSha: string, filePath: string) {
-    try {
-      // Get the content of the file at this specific commit
-      const { data: fileData } = await context.octokit.repos.getContent({
-        owner,
-        repo,
-        path: filePath,
-        ref: commitSha,
-      });
-
-      app.log.info(`Obteniendo contenido completo de: ${filePath} en commit ${commitSha}`);
-
-      // The content is base64 encoded
-      if ('content' in fileData && typeof fileData.content === 'string') {
-        const content = Buffer.from(fileData.content, 'base64').toString('utf-8');
-        app.log.info('Contenido completo del archivo (primeras 300 caracteres):');
-        app.log.info(content.substring(0, 300) + (content.length > 300 ? '...' : ''));
-
-        // You could save this to a file, database, or return it
-        return content;
-      }
-
-      app.log.info('No se pudo obtener el contenido del archivo (probablemente es un directorio o archivo binario)');
-      return null;
-    } catch (error) {
-      app.log.error(`Error obteniendo contenido del archivo ${filePath}: ${error}`);
-      return null;
-    }
-  }
-
-  // Función para crear sugerencias de mejora de documentación usando AI
-  async function createSuggestionWithAI(
-    context: Context,
-    owner: string,
-    repo: string,
-    pullNumber: number,
-    commitId: string,
-    filePath: string,
-    patch: string
-  ) {
-    try {
-      // Analizar el patch para encontrar las líneas añadidas o modificadas
-      const lines = patch.split('\n');
-      const suggestions = [];
-
-      // Procesar cada línea del patch
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // Buscar líneas que comienzan con '+' (añadidas/modificadas) pero no las líneas de metadata (+++/---)
-        if (line.startsWith('+') && !line.startsWith('+++')) {
-          // Obtener la línea sin el prefijo '+'
-          const codeLine = line.substring(1);
-
-          // Solo procesar si la línea parece ser documentación (comentarios o markdown)
-          if (codeLine.trim().startsWith('//') || codeLine.trim().startsWith('/*') || codeLine.trim().startsWith('*') || codeLine.trim().startsWith('#')) {
-            try {
-              // Usar AI para mejorar la documentación
-              const { text } = await generateText({
-                model: openai("gpt-4"),
-                prompt: `improve this docs changes: ${codeLine}`
-              });
-
-              // Crear la sugerencia con la mejora de AI
-              const suggestionLine = text;
-
-              // Guardar información para crear la sugerencia
-              suggestions.push({
-                line: i,
-                content: suggestionLine,
-                originalLine: codeLine
-              });
-            } catch (aiError) {
-              app.log.error(`Error al generar mejora con AI: ${aiError}`);
-            }
-          }
-        }
-      }
-
-      // Si hay sugerencias para hacer
-      if (suggestions.length > 0) {
-        app.log.info(`Creando ${suggestions.length} sugerencias de mejora de documentación para el archivo ${filePath}`);
-
-        // Para cada sugerencia, crear un comentario en la revisión del PR
-        for (const suggestion of suggestions) {
-          // Determinar la posición en el archivo
-          let position = 1;
-          for (let j = 0; j <= suggestion.line; j++) {
-            if (lines[j]?.startsWith('@@ ')) {
-              const match = lines[j].match(/@@ -\d+,\d+ \+(\d+),\d+ @@/);
-              if (match?.[1]) {
-                position = Number.parseInt(match[1], 10) - 1;
-              }
-            } else if (!lines[j]?.startsWith('-')) {
-              position++;
-            }
-          }
-
-          // Crear el comentario con la sugerencia
-          const body = [
-            'Sugerencia de mejora de documentación:',
-            '```suggestion',
-            suggestion.content,
-            '```'
-          ].join('\n');
-
-          try {
-            // Crear el comentario de revisión
-            await context.octokit.pulls.createReviewComment({
-              owner,
-              repo,
-              pull_number: pullNumber,
-              body,
-              commit_id: commitId,
-              path: filePath,
-              position,
-            });
-
-            app.log.info(`Sugerencia de mejora creada exitosamente para la línea ${position} en ${filePath}`);
-          } catch (commentError) {
-            app.log.error(`Error al crear la sugerencia: ${commentError}`);
-          }
-        }
-      }
-    } catch (error) {
-      app.log.error(`Error al analizar el patch y crear sugerencias: ${error}`);
-    }
-  }
-
+  // Handle pull request synchronize events
   app.on("pull_request.synchronize", async (context) => {
     app.log.info("Received pull_request.synchronize event");
 
     // Extract basic PR information
-    const repo = context.payload.repository.full_name;
+    const repo = context.payload.repository;
     const prNumber = context.payload.pull_request.number;
-    const headSha = context.payload.pull_request.head.sha;
     const beforeSha = context.payload.before;
     const afterSha = context.payload.after;
+    const owner = repo.owner.login;
 
-    app.log.info(`PR #${prNumber} in ${repo} was synchronized`);
-    app.log.info(`Head commit: ${headSha}`);
+    app.log.info(`PR #${prNumber} in ${repo.full_name} was synchronized`);
     app.log.info(`Changed from ${beforeSha} to ${afterSha}`);
 
     try {
       // Fetch commits in this PR
-      const { data: commits } = await context.octokit.pulls.listCommits({
-        owner: context.payload.repository.owner.login,
-        repo: context.payload.repository.name,
-        pull_number: prNumber,
-      });
-
-      app.log.info(`Found ${commits.length} commits in this PR`);
+      const commits = await getCommitsInPR(
+        context,
+        owner,
+        repo.name,
+        prNumber,
+        app.log
+      );
 
       // Process each commit
       for (const commit of commits) {
-        app.log.info(`Commit: ${commit.sha}`);
-        app.log.info(`Author: ${commit.commit.author?.name || 'Unknown'} <${commit.commit.author?.email || 'No email'}>`);
+        app.log.info(`Processing commit: ${commit.sha}`);
+        app.log.info(`Author: ${commit.commit.author?.name || 'Unknown'}`);
         app.log.info(`Message: ${commit.commit.message || 'No message'}`);
 
         // Get detailed changes for this commit
         const commitDetails = await getCommitDetails(
           context,
-          context.payload.repository.owner.login,
-          context.payload.repository.name,
-          commit.sha
+          owner,
+          repo.name,
+          commit.sha,
+          app.log
         );
 
-        // Crear sugerencias para cada archivo modificado
+        // Create suggestions for each modified file
         if (commitDetails?.files) {
-          for (const file of commitDetails.files) {
+          for (const file of commitDetails.files as CommitFile[]) {
             if (file.patch) {
-              await createSuggestionWithAI(
+              await createDocumentationSuggestions(
                 context,
-                context.payload.repository.owner.login,
-                context.payload.repository.name,
+                owner,
+                repo.name,
                 prNumber,
                 commit.sha,
                 file.filename,
-                file.patch
+                file.patch,
+                app.log
               );
             }
           }
         }
       }
 
-      // Get detailed difference between the base and head
-      app.log.info(`Getting diff between ${beforeSha} and ${afterSha}`);
-      const { data: comparison } = await context.octokit.repos.compareCommits({
-        owner: context.payload.repository.owner.login,
-        repo: context.payload.repository.name,
-        base: beforeSha,
-        head: afterSha,
-      });
-
-      app.log.info(`Comparison status: ${comparison.status}`);
-      app.log.info(`Total commits in diff: ${comparison.total_commits}`);
-      app.log.info(`Files changed: ${comparison.files?.length || 0}`);
-
+      // Compare base and head commits
+      await compareCommits(
+        context,
+        owner,
+        repo.name,
+        beforeSha,
+        afterSha,
+        app.log
+      );
     } catch (error) {
-      app.log.error(`Error fetching commit data: ${error}`);
+      app.log.error(`Error processing PR synchronize event: ${error}`);
     }
   });
 
-  // Handle individual commit push events to get detailed changes
+  // Handle push events to get detailed changes
   app.on("push", async (context) => {
     const commits = context.payload.commits;
     const repository = context.payload.repository;
@@ -288,12 +105,29 @@ export default (app: Probot) => {
       }
 
       // Get detailed changes for this commit
-      await getCommitDetails(
+      const commitDetails = await getCommitDetails(
         context,
         ownerLogin,
         repository.name,
-        commit.id
+        commit.id,
+        app.log
       );
+
+      // Process files if available
+      if (commitDetails?.files) {
+        for (const file of commitDetails.files as CommitFile[]) {
+          if (file.status !== 'removed' && file.filename) {
+            await getFileContent(
+              context,
+              ownerLogin,
+              repository.name,
+              commit.id,
+              file.filename,
+              app.log
+            );
+          }
+        }
+      }
     }
   });
 };

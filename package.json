@@ -2,14 +2,16 @@
   "name": "my-first-app",
   "version": "1.0.0",
   "private": true,
-  "description": "A Probot app",
+  "description": "A Probot app for GitHub with AI-powered documentation suggestions",
   "author": "Decker",
   "license": "ISC",
   "homepage": "https://github.com//",
   "keywords": [
     "probot",
     "github",
-    "probot-app"
+    "probot-app",
+    "ai",
+    "documentation"
   ],
   "scripts": {
     "build": "tsc",

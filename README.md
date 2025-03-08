@@ -1,33 +1,68 @@
-# my-first-app
+# GitHub Documentation Assistant
 
-> A GitHub App built with [Probot](https://github.com/probot/probot) that A Probot app
+A Probot app that uses AI to provide documentation improvement suggestions in pull requests.
 
-## Setup
+## Features
 
-```sh
+- Monitors pull request changes
+- Automatically analyzes documentation in the code
+- Uses AI to suggest improvements to comments and documentation
+- Posts suggestions as review comments on the pull request
+
+## Architecture
+
+The application is organized into the following modules:
+
+- **src/index.ts**: Main entry point that sets up event handlers
+- **src/types**: Type definitions for the application
+- **src/services**: Services for interacting with GitHub API
+- **src/ai**: AI functionality for generating suggestions
+
+## Installation
+
+```bash
 # Install dependencies
 npm install
 
-# Run the bot
+# Build the app
+npm run build
+
+# Start the app
 npm start
 ```
 
-## Docker
+## Development
 
-```sh
-# 1. Build container
-docker build -t my-first-app .
+```bash
+# Run the app in development mode with auto-reloading
+npm run dev
 
-# 2. Start container
-docker run -e APP_ID=<app-id> -e PRIVATE_KEY=<pem-value> my-first-app
+# Run tests
+npm test
 ```
 
-## Contributing
+## Environment Variables
 
-If you have suggestions for how my-first-app could be improved, or want to report a bug, open an issue! We'd love all and any contributions.
+Create a `.env` file with the following variables:
 
-For more, check out the [Contributing Guide](CONTRIBUTING.md).
+```
+# GitHub App credentials
+APP_ID=
+WEBHOOK_SECRET=
+PRIVATE_KEY=
+
+# OpenAI API key
+OPENAI_API_KEY=
+```
+
+## How It Works
+
+1. The app listens for pull request synchronize events and push events
+2. For each change, it analyzes the files modified
+3. When it finds documentation changes (comments, JSDoc, etc.), it sends them to an AI model
+4. The AI suggests improvements to the documentation
+5. The app posts these suggestions as review comments on the pull request
 
 ## License
 
-[ISC](LICENSE) © 2025 Decker
+ISC
