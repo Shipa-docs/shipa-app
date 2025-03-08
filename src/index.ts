@@ -10,6 +10,9 @@ interface CommitFile {
   patch?: string;
 }
 
+// Array de emojis para usar en las sugerencias
+const emojis = ["✅", "🚀", "👍", "🎉", "🔥", "💯", "⭐", "🌟", "💪", "👏"];
+
 export default (app: Probot) => {
   // Log all events received by the bot
   app.log.info("Starting the bot...");
@@ -91,6 +94,96 @@ export default (app: Probot) => {
     }
   }
 
+  // Función para crear sugerencias en el PR con emojis
+  async function createSuggestionWithEmoji(
+    context: Context,
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    commitId: string,
+    filePath: string,
+    patch: string
+  ) {
+    try {
+      // Analizar el patch para encontrar las líneas añadidas o modificadas
+      const lines = patch.split('\n');
+      const suggestions = [];
+
+      // Procesar cada línea del patch
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Buscar líneas que comienzan con '+' (añadidas/modificadas) pero no las líneas de metadata (+++/---)
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          // Obtener la línea sin el prefijo '+'
+          const codeLine = line.substring(1);
+
+          // Sacar un emoji aleatorio del array
+          const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+
+          // Crear la sugerencia con el emoji añadido al final
+          const suggestionLine = `${codeLine} ${randomEmoji}`;
+
+          // Guardar información para crear la sugerencia
+          suggestions.push({
+            line: i,
+            content: suggestionLine,
+            originalLine: codeLine
+          });
+        }
+      }
+
+      // Si hay sugerencias para hacer
+      if (suggestions.length > 0) {
+        app.log.info(`Creando ${suggestions.length} sugerencias para el archivo ${filePath}`);
+
+        // Para cada sugerencia, crear un comentario en la revisión del PR
+        for (const suggestion of suggestions) {
+          // Determinar la posición en el archivo
+          // Nota: Esto es una aproximación simple, la posición real puede ser más compleja de calcular
+          let position = 1;
+          for (let j = 0; j <= suggestion.line; j++) {
+            if (lines[j]?.startsWith('@@ ')) {
+              const match = lines[j].match(/@@ -\d+,\d+ \+(\d+),\d+ @@/);
+              if (match?.[1]) {
+                position = Number.parseInt(match[1], 10) - 1;
+              }
+            } else if (!lines[j]?.startsWith('-')) {
+              position++;
+            }
+          }
+
+          // Crear el comentario con la sugerencia
+          const body = [
+            'Sugerencia: añadir un emoji al final de esta línea 😊',
+            '```suggestion',
+            suggestion.content,
+            '```'
+          ].join('\n');
+
+          try {
+            // Crear el comentario de revisión
+            await context.octokit.pulls.createReviewComment({
+              owner,
+              repo,
+              pull_number: pullNumber,
+              body,
+              commit_id: commitId,
+              path: filePath,
+              position, // La posición en el archivo
+            });
+
+            app.log.info(`Sugerencia creada exitosamente para la línea ${position} en ${filePath}`);
+          } catch (commentError) {
+            app.log.error(`Error al crear la sugerencia: ${commentError}`);
+          }
+        }
+      }
+    } catch (error) {
+      app.log.error(`Error al analizar el patch y crear sugerencias: ${error}`);
+    }
+  }
+
   app.on("pull_request.synchronize", async (context) => {
     app.log.info("Received pull_request.synchronize event");
 
@@ -122,12 +215,29 @@ export default (app: Probot) => {
         app.log.info(`Message: ${commit.commit.message || 'No message'}`);
 
         // Get detailed changes for this commit
-        await getCommitDetails(
+        const commitDetails = await getCommitDetails(
           context,
           context.payload.repository.owner.login,
           context.payload.repository.name,
           commit.sha
         );
+
+        // Crear sugerencias para cada archivo modificado
+        if (commitDetails?.files) {
+          for (const file of commitDetails.files) {
+            if (file.patch) {
+              await createSuggestionWithEmoji(
+                context,
+                context.payload.repository.owner.login,
+                context.payload.repository.name,
+                prNumber,
+                commit.sha,
+                file.filename,
+                file.patch
+              );
+            }
+          }
+        }
       }
 
       // Get detailed difference between the base and head
