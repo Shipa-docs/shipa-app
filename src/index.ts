@@ -1,5 +1,7 @@
 import type { Probot } from "probot";
 import type { Context } from "probot";
+import { generateText } from "ai"
+import { openai } from "@ai-sdk/openai"
 
 // Interfaces para los tipos
 interface CommitFile {
@@ -10,7 +12,8 @@ interface CommitFile {
   patch?: string;
 }
 
-const emojis = ["✅", "🚀", "👍", "🎉", "🔥", "💯", "⭐", "🌟", "💪", "👏"];
+// Array de emojis para usar en las sugerencias
+// const emojis = ["✅", "🚀", "👍", "🎉", "🔥", "💯", "⭐", "🌟", "💪", "👏"];
 
 export default (app: Probot) => {
   // Log all events received by the bot
@@ -93,8 +96,8 @@ export default (app: Probot) => {
     }
   }
 
-  // Función para crear sugerencias en el PR con emojis
-  async function createSuggestionWithEmoji(
+  // Función para crear sugerencias de mejora de documentación usando AI
+  async function createSuggestionWithAI(
     context: Context,
     owner: string,
     repo: string,
@@ -117,29 +120,38 @@ export default (app: Probot) => {
           // Obtener la línea sin el prefijo '+'
           const codeLine = line.substring(1);
 
-          // Sacar un emoji aleatorio del array
-          const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+          // Solo procesar si la línea parece ser documentación (comentarios o markdown)
+          if (codeLine.trim().startsWith('//') || codeLine.trim().startsWith('/*') || codeLine.trim().startsWith('*') || codeLine.trim().startsWith('#')) {
+            try {
+              // Usar AI para mejorar la documentación
+              const { text } = await generateText({
+                model: openai("gpt-4"),
+                prompt: `improve this docs changes: ${codeLine}`
+              });
 
-          // Crear la sugerencia con el emoji añadido al final
-          const suggestionLine = `${codeLine} ${randomEmoji}`;
+              // Crear la sugerencia con la mejora de AI
+              const suggestionLine = text;
 
-          // Guardar información para crear la sugerencia
-          suggestions.push({
-            line: i,
-            content: suggestionLine,
-            originalLine: codeLine
-          });
+              // Guardar información para crear la sugerencia
+              suggestions.push({
+                line: i,
+                content: suggestionLine,
+                originalLine: codeLine
+              });
+            } catch (aiError) {
+              app.log.error(`Error al generar mejora con AI: ${aiError}`);
+            }
+          }
         }
       }
 
       // Si hay sugerencias para hacer
       if (suggestions.length > 0) {
-        app.log.info(`Creando ${suggestions.length} sugerencias para el archivo ${filePath}`);
+        app.log.info(`Creando ${suggestions.length} sugerencias de mejora de documentación para el archivo ${filePath}`);
 
         // Para cada sugerencia, crear un comentario en la revisión del PR
         for (const suggestion of suggestions) {
           // Determinar la posición en el archivo
-          // Nota: Esto es una aproximación simple, la posición real puede ser más compleja de calcular
           let position = 1;
           for (let j = 0; j <= suggestion.line; j++) {
             if (lines[j]?.startsWith('@@ ')) {
@@ -154,7 +166,7 @@ export default (app: Probot) => {
 
           // Crear el comentario con la sugerencia
           const body = [
-            'Sugerencia: añadir un emoji al final de esta línea 😊',
+            'Sugerencia de mejora de documentación:',
             '```suggestion',
             suggestion.content,
             '```'
@@ -169,10 +181,10 @@ export default (app: Probot) => {
               body,
               commit_id: commitId,
               path: filePath,
-              position, // La posición en el archivo
+              position,
             });
 
-            app.log.info(`Sugerencia creada exitosamente para la línea ${position} en ${filePath}`);
+            app.log.info(`Sugerencia de mejora creada exitosamente para la línea ${position} en ${filePath}`);
           } catch (commentError) {
             app.log.error(`Error al crear la sugerencia: ${commentError}`);
           }
@@ -225,7 +237,7 @@ export default (app: Probot) => {
         if (commitDetails?.files) {
           for (const file of commitDetails.files) {
             if (file.patch) {
-              await createSuggestionWithEmoji(
+              await createSuggestionWithAI(
                 context,
                 context.payload.repository.owner.login,
                 context.payload.repository.name,
