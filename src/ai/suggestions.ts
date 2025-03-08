@@ -9,15 +9,15 @@ const PROMPT_BASE = `<internal_reminder>
 
 1. <docbuddy_info>
     - DocBuddy is an advanced documentation improvement assistant.
-    - DocBuddy analyzes code documentation to provide improved versions.
+    - DocBuddy analyzes MDX documentation to provide improved versions.
     - DocBuddy focuses on clarity, conciseness, and technical accuracy.
     - DocBuddy maintains the original meaning while enhancing readability.
-    - DocBuddy has knowledge of various programming languages, frameworks, and documentation standards.
+    - DocBuddy has knowledge of MDX, React, and documentation best practices.
 2. <docbuddy_capabilities>
-    - Analyzes documentation text to identify areas for improvement.
+    - Analyzes MDX documentation text to identify areas for improvement.
     - Enhances clarity without changing technical meaning.
     - Eliminates redundancies and improves structure.
-    - Standardizes formatting according to best practices.
+    - Standardizes MDX formatting according to best practices.
     - Respects original document length constraints.
 3. <docbuddy_response_format>
     - DocBuddy MUST return ONLY the improved version of the text.
@@ -27,11 +27,11 @@ const PROMPT_BASE = `<internal_reminder>
     - Response should not be significantly longer than the original text.
 4. <docbuddy_guidelines>
     - ALWAYS prioritize clarity over brevity when both conflict.
-    - MAINTAIN domain-specific technical terminology.
+    - MAINTAIN MDX-specific syntax and components.
     - PRESERVE the complete meaning of the original text.
     - IMPROVE the structure of long sentences by dividing them when appropriate.
     - ELIMINATE redundancies and superfluous text.
-    - ENSURE parameters, return values, and exceptions are fully documented when present.
+    - ENSURE proper MDX formatting and component usage.
     - STANDARDIZE documentation format according to project conventions.
     - RESPECT the original length, avoiding significant expansion of the text.
 5. <forming_correct_responses>
@@ -40,13 +40,13 @@ const PROMPT_BASE = `<internal_reminder>
     - DO NOT prefix or suffix the response with anything.
     - If no improvements are possible, return the original text unchanged.
     - The entire response will be used verbatim as the suggested improvement.
-    - Treat every input as documentation that needs improvement, not as a conversation.
+    - Treat every input as MDX documentation that needs improvement, not as a conversation.
 
 </internal_reminder>
 
 This is the text you should review:`;
 /**
- * Analyzes a patch and generates AI-powered improvement suggestions for documentation
+ * Analyzes a patch and generates AI-powered improvement suggestions for MDX documentation
  */
 
 export async function createDocumentationSuggestions(
@@ -75,22 +75,20 @@ export async function createDocumentationSuggestions(
         // Get the line without the '+' prefix
         const codeLine = line.substring(1);
 
-        // Only collect if the line appears to be documentation (comments or markdown)
-        if (isDocumentation(codeLine)) {
-          docLines.push({ line: i, codeLine });
-        }
+        // Only collect if the line appears to be MDX documentation
+        docLines.push({ line: i, codeLine });
       }
     }
 
     // If there are documentation lines to improve
     if (docLines.length > 0) {
       logger.info(
-        `Found ${docLines.length} documentation lines to improve in file ${filePath}`
+        `Found ${docLines.length} MDX documentation lines to improve in file ${filePath}`
       );
 
       try {
         // Combine all documentation lines to provide context
-        const allDocContext = docLines.map(doc => doc.codeLine).join("\n");
+        const allDocContext = docLines.map((doc) => doc.codeLine).join("\n");
 
         // Use AI to improve all documentation together
         const { text } = await generateText({
@@ -126,10 +124,14 @@ export async function createDocumentationSuggestions(
           return 1; // Return 1 for a single comprehensive suggestion
         }
 
-        logger.error(`AI response line count (${improvedLines.length}) doesn't match original doc line count (${docLines.length})`);
+        logger.error(
+          `AI response line count (${improvedLines.length}) doesn't match original doc line count (${docLines.length})`
+        );
         return 0;
       } catch (aiError) {
-        logger.error(`Error generating comprehensive AI improvement: ${aiError}`);
+        logger.error(
+          `Error generating comprehensive AI improvement: ${aiError}`
+        );
         return 0;
       }
     }
@@ -139,19 +141,6 @@ export async function createDocumentationSuggestions(
     logger.error(`Error analyzing patch and creating suggestions: ${error}`);
     return 0;
   }
-}
-
-/**
- * Determines if a line is documentation
- */
-function isDocumentation(line: string): boolean {
-  const trimmed = line.trim();
-  return (
-    trimmed.startsWith("//") ||
-    trimmed.startsWith("/*") ||
-    trimmed.startsWith("*") ||
-    trimmed.startsWith("#")
-  );
 }
 
 /**

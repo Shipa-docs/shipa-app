@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "command": "npm run start",
+      "command": "rm -rf lib && npm run build && npm run start",
       "name": "Debug Bot Core",
       "request": "launch",
       "type": "node-terminal",
