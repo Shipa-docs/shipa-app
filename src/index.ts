@@ -38,18 +38,20 @@ export default (app: Probot) => {
         app.log
       );
 
-      // Process each commit
-      for (const commit of commits) {
-        app.log.info(`Processing commit: ${commit.sha}`);
-        app.log.info(`Author: ${commit.commit.author?.name || 'Unknown'}`);
-        app.log.info(`Message: ${commit.commit.message || 'No message'}`);
+      // Process only the last commit instead of all commits
+      if (commits.length > 0) {
+        const lastCommit = commits[commits.length - 1];
+
+        app.log.info(`Processing only the last commit: ${lastCommit.sha}`);
+        app.log.info(`Author: ${lastCommit.commit.author?.name || 'Unknown'}`);
+        app.log.info(`Message: ${lastCommit.commit.message || 'No message'}`);
 
         // Get detailed changes for this commit
         const commitDetails = await getCommitDetails(
           context,
           owner,
           repo.name,
-          commit.sha,
+          lastCommit.sha,
           app.log
         );
 
@@ -62,7 +64,7 @@ export default (app: Probot) => {
                 owner,
                 repo.name,
                 prNumber,
-                commit.sha,
+                lastCommit.sha,
                 file.filename,
                 file.patch,
                 app.log
@@ -70,6 +72,8 @@ export default (app: Probot) => {
             }
           }
         }
+      } else {
+        app.log.info("No commits found in this PR");
       }
 
       // Compare base and head commits
