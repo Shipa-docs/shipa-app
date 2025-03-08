@@ -29,10 +29,50 @@ export default (app: Probot) => {
     app.log.info(`Changed from ${beforeSha} to ${afterSha}`);
 
     try {
-      // Solo obtenemos y procesamos el último commit
-      app.log.info(`Processing only the last commit: ${afterSha}`);
+      // Fetch commits in this PR
+      const commits = await getCommitsInPR(
+        context,
+        owner,
+        repo.name,
+        prNumber,
+        app.log
+      );
 
-      // Compare just the last commit
+      // Process each commit
+      for (const commit of commits) {
+        app.log.info(`Processing commit: ${commit.sha}`);
+        app.log.info(`Author: ${commit.commit.author?.name || 'Unknown'}`);
+        app.log.info(`Message: ${commit.commit.message || 'No message'}`);
+
+        // Get detailed changes for this commit
+        const commitDetails = await getCommitDetails(
+          context,
+          owner,
+          repo.name,
+          commit.sha,
+          app.log
+        );
+
+        // Create suggestions for each modified file
+        if (commitDetails?.files) {
+          for (const file of commitDetails.files as CommitFile[]) {
+            if (file.patch) {
+              await createDocumentationSuggestions(
+                context,
+                owner,
+                repo.name,
+                prNumber,
+                commit.sha,
+                file.filename,
+                file.patch,
+                app.log
+              );
+            }
+          }
+        }
+      }
+
+      // Compare base and head commits
       await compareCommits(
         context,
         owner,
@@ -45,4 +85,3 @@ export default (app: Probot) => {
       app.log.error(`Error processing PR synchronize event: ${error}`);
     }
   });
-};
