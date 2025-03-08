@@ -2,7 +2,7 @@ import type { Context } from "probot";
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
-import type { DocSuggestion, Logger } from "../types/index.js";
+import type { Logger } from "../types/index.js";
 import { createReviewComment } from "../services/github.js";
 
 const PROMPT_BASE = `<internal_reminder>
@@ -62,8 +62,11 @@ export async function createDocumentationSuggestions(
   try {
     // Parse the patch to find added or modified lines
     const lines = patch.split("\n");
-    const suggestions: DocSuggestion[] = [];
-    // Process each line in the patch
+
+    // Collect all documentation lines and their positions
+    const docLines: { line: number; codeLine: string }[] = [];
+
+    // Process each line in the patch to identify documentation
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
@@ -72,58 +75,63 @@ export async function createDocumentationSuggestions(
         // Get the line without the '+' prefix
         const codeLine = line.substring(1);
 
-        // Only process if the line appears to be documentation (comments or markdown)
+        // Only collect if the line appears to be documentation (comments or markdown)
         if (isDocumentation(codeLine)) {
-          try {
-            // Use AI to improve the documentation
-            const { text } = await generateText({
-              model: openai("gpt-4"),
-              system: PROMPT_BASE,
-              prompt: `${codeLine}`,
-            });
-
-            // Create the suggestion with the AI improvement
-            suggestions.push({
-              line: i,
-              content: text,
-              originalLine: codeLine,
-            });
-          } catch (aiError) {
-            logger.error(`Error generating AI improvement: ${aiError}`);
-          }
+          docLines.push({ line: i, codeLine });
         }
       }
     }
 
-    // If there are suggestions to make
-    if (suggestions.length > 0) {
+    // If there are documentation lines to improve
+    if (docLines.length > 0) {
       logger.info(
-        `Creating ${suggestions.length} documentation improvement suggestions for file ${filePath}`
+        `Found ${docLines.length} documentation lines to improve in file ${filePath}`
       );
 
-      // For each suggestion, create a comment in the PR review
-      for (const suggestion of suggestions) {
-        // Determine the position in the file
-        const position = calculatePositionInFile(lines, suggestion.line);
+      try {
+        // Combine all documentation lines to provide context
+        const allDocContext = docLines.map(doc => doc.codeLine).join("\n");
 
-        // Create the comment body with the suggestion
-        const body = formatSuggestionComment(suggestion.content);
+        // Use AI to improve all documentation together
+        const { text } = await generateText({
+          model: openai("gpt-4"),
+          system: PROMPT_BASE,
+          prompt: `${allDocContext}`,
+        });
 
-        // Create the review comment
-        await createReviewComment(
-          context,
-          owner,
-          repo,
-          pullNumber,
-          body,
-          commitId,
-          filePath,
-          position,
-          logger
-        );
+        // Split the improved suggestion back into individual lines
+        const improvedLines = text.split("\n");
+
+        // Make sure we have the same number of lines in response
+        if (improvedLines.length === docLines.length) {
+          // Create the review comment with the comprehensive suggestion
+          const body = formatSuggestionComment(text);
+
+          // Use the position of the first documentation line
+          const position = calculatePositionInFile(lines, docLines[0].line);
+
+          // Create the review comment
+          await createReviewComment(
+            context,
+            owner,
+            repo,
+            pullNumber,
+            body,
+            commitId,
+            filePath,
+            position,
+            logger
+          );
+
+          return 1; // Return 1 for a single comprehensive suggestion
+        }
+
+        logger.error(`AI response line count (${improvedLines.length}) doesn't match original doc line count (${docLines.length})`);
+        return 0;
+      } catch (aiError) {
+        logger.error(`Error generating comprehensive AI improvement: ${aiError}`);
+        return 0;
       }
-
-      return suggestions.length;
     }
 
     return 0;
