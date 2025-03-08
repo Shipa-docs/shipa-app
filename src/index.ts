@@ -10,7 +10,6 @@ interface CommitFile {
   patch?: string;
 }
 
-// Array de emojis para usar en las sugerencias
 const emojis = ["✅", "🚀", "👍", "🎉", "🔥", "💯", "⭐", "🌟", "💪", "👏"];
 
 export default (app: Probot) => {
