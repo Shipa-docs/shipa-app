@@ -29,50 +29,10 @@ export default (app: Probot) => {
     app.log.info(`Changed from ${beforeSha} to ${afterSha}`);
 
     try {
-      // Fetch commits in this PR
-      const commits = await getCommitsInPR(
-        context,
-        owner,
-        repo.name,
-        prNumber,
-        app.log
-      );
+      // Solo obtenemos y procesamos el último commit
+      app.log.info(`Processing only the last commit: ${afterSha}`);
 
-      // Process each commit
-      for (const commit of commits) {
-        app.log.info(`Processing commit: ${commit.sha}`);
-        app.log.info(`Author: ${commit.commit.author?.name || 'Unknown'}`);
-        app.log.info(`Message: ${commit.commit.message || 'No message'}`);
-
-        // Get detailed changes for this commit
-        const commitDetails = await getCommitDetails(
-          context,
-          owner,
-          repo.name,
-          commit.sha,
-          app.log
-        );
-
-        // Create suggestions for each modified file
-        if (commitDetails?.files) {
-          for (const file of commitDetails.files as CommitFile[]) {
-            if (file.patch) {
-              await createDocumentationSuggestions(
-                context,
-                owner,
-                repo.name,
-                prNumber,
-                commit.sha,
-                file.filename,
-                file.patch,
-                app.log
-              );
-            }
-          }
-        }
-      }
-
-      // Compare base and head commits
+      // Compare just the last commit
       await compareCommits(
         context,
         owner,
@@ -83,51 +43,6 @@ export default (app: Probot) => {
       );
     } catch (error) {
       app.log.error(`Error processing PR synchronize event: ${error}`);
-    }
-  });
-
-  // Handle push events to get detailed changes
-  app.on("push", async (context) => {
-    const commits = context.payload.commits;
-    const repository = context.payload.repository;
-
-    app.log.info(`Received push with ${commits.length} commits`);
-
-    for (const commit of commits) {
-      app.log.info(`Processing commit: ${commit.id}`);
-      app.log.info(`Commit message: ${commit.message}`);
-
-      // Get owner login safely
-      const ownerLogin = repository.owner.login || repository.owner.name || '';
-      if (!ownerLogin) {
-        app.log.error('Could not determine repository owner');
-        continue;
-      }
-
-      // Get detailed changes for this commit
-      const commitDetails = await getCommitDetails(
-        context,
-        ownerLogin,
-        repository.name,
-        commit.id,
-        app.log
-      );
-
-      // Process files if available
-      if (commitDetails?.files) {
-        for (const file of commitDetails.files as CommitFile[]) {
-          if (file.status !== 'removed' && file.filename) {
-            await getFileContent(
-              context,
-              ownerLogin,
-              repository.name,
-              commit.id,
-              file.filename,
-              app.log
-            );
-          }
-        }
-      }
     }
   });
 };

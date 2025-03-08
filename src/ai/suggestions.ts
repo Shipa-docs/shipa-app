@@ -1,6 +1,8 @@
 import type { Context } from "probot";
 import { generateText } from "ai";
+//import {ollama} from "ollama-ai-provider";
 import { openai } from "@ai-sdk/openai";
+
 import type { DocSuggestion, Logger } from "../types/index.js";
 import { createReviewComment } from "../services/github.js";
 
@@ -21,7 +23,11 @@ export async function createDocumentationSuggestions(
     // Parse the patch to find added or modified lines
     const lines = patch.split('\n');
     const suggestions: DocSuggestion[] = [];
-
+    console.log({
+      lines,
+      patch
+    });
+    return 0;
     // Process each line in the patch
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -36,7 +42,8 @@ export async function createDocumentationSuggestions(
           try {
             // Use AI to improve the documentation
             const { text } = await generateText({
-              model: openai("gpt-4"),
+              model: openai("gpt-4o-mini"),
+              
               prompt: `improve this docs changes: ${codeLine}`
             });
 
