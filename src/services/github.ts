@@ -75,6 +75,10 @@ export async function getFileContent(
 
 /**
  * Creates a review comment on a pull request
+ * 
+ * Note: The position parameter is being deprecated by GitHub API.
+ * This function now uses line and side parameters instead, with position
+ * being used as the line number for backward compatibility.
  */
 export async function createReviewComment(
   context: Context,
@@ -84,27 +88,37 @@ export async function createReviewComment(
   body: string,
   commitId: string,
   filePath: string,
-  position: number,
-  logger: Logger
+  line: number,
+  logger: Logger,
+  side: "RIGHT" | "LEFT" = "RIGHT",
+  startLine?: number,
+  startSide?: "RIGHT" | "LEFT"
 ) {
   try {
-    // First try creating a review comment with position
+    // First try creating a review comment with line and side
     try {
-      await context.octokit.pulls.createReviewComment({
+      const params = {
         owner,
         repo,
         pull_number: pullNumber,
         body,
         commit_id: commitId,
         path: filePath,
-        position,
-      });
+        line,
+        side,
+        ...(startLine ? {
+          start_line: startLine,
+          start_side: startSide || side
+        } : {})
+      };
 
-      logger.info(`Review comment created successfully for line ${position} in ${filePath}`);
+      await context.octokit.pulls.createReviewComment(params);
+
+      logger.info(`Review comment created successfully for line ${line} in ${filePath}`);
       return true;
-    } catch (positionError) {
-      // If it fails due to position issues, try alternative approach by creating a review instead
-      logger.info(`Position-based comment failed: ${positionError}. Trying alternative approach.`);
+    } catch (lineError) {
+      // If it fails due to line/side issues, try alternative approach by creating a review instead
+      logger.info(`Line-based comment failed: ${lineError}. Trying alternative approach.`);
 
       // Create a review instead of a direct comment
       await context.octokit.pulls.createReview({
