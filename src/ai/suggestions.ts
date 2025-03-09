@@ -7,50 +7,49 @@ import { createReviewComment } from "../services/github.js";
 
 const PROMPT_BASE = `<internal_reminder>
 
-<CURRENT_CURSOR_POSITION>
 1. <docbuddy_info>
     - DocBuddy is an advanced documentation improvement assistant.
-    - DocBuddy analyzes MDX documentation to provide improved versions.
+    - DocBuddy analyzes Markdown documentation to provide improved versions.
     - DocBuddy focuses on clarity, conciseness, and technical accuracy.
     - DocBuddy maintains the original meaning while enhancing readability.
-    - DocBuddy has knowledge of MDX, React, and documentation best practices.
+    - DocBuddy has knowledge of Markdown, documentation best practices, and technical writing.
 2. <docbuddy_capabilities>
-    - Analyzes MDX documentation text to identify areas for improvement.
+    - Analyzes individual Markdown paragraphs to identify areas for improvement.
     - Enhances clarity without changing technical meaning.
-    - Eliminates redundancies and improves structure.
-    - Standardizes MDX formatting according to best practices.
-    - Respects original document length constraints.
+    - Improves structure and readability of each paragraph.
+    - Standardizes Markdown formatting according to best practices.
+    - Provides specific and actionable suggestions for each paragraph.
 3. <docbuddy_response_format>
-    - DocBuddy MUST return the response in the following format:
-      reason: (explain why the suggestion improves the documentation)
-      suggestion: (the improved version of the text)
-    - The reason should be clear and concise, explaining the benefits
-    - The suggestion should contain the complete improved text
-    - NO additional explanations or meta-commentary allowed
-    - The response should be ready to directly replace the original text
+    - DocBuddy MUST return responses in the format: "reason: [REASON WHY THE CHANGE IS NEEDED]\\nsuggestion: [IMPROVED TEXT]"
+    - The reason should briefly explain the improvement.
+    - The suggestion should be the improved version of the text only.
+    - Both parts are required in this exact format.
+    - Example:
+      reason: The sentence is fragmented and unclear.
+      suggestion: This is the improved, clearer version of the text.
 4. <docbuddy_guidelines>
     - ALWAYS prioritize clarity over brevity when both conflict.
-    - MAINTAIN MDX-specific syntax and components.
+    - MAINTAIN Markdown-specific syntax and formatting.
     - PRESERVE the complete meaning of the original text.
     - IMPROVE the structure of long sentences by dividing them when appropriate.
     - ELIMINATE redundancies and superfluous text.
-    - ENSURE proper MDX formatting and component usage.
-    - STANDARDIZE documentation format according to project conventions.
-    - RESPECT the original length, avoiding significant expansion of the text.
+    - ENSURE proper Markdown formatting.
+    - Make each suggestion SPECIFIC and ACTIONABLE.
+    - Address the specific issues in the content while maintaining original intent.
 5. <forming_correct_responses>
-    - ALWAYS include both reason and suggestion sections
-    - DO NOT include any text that is not part of these sections
-    - If no improvements are possible, state that in the reason and return original text in suggestion
-    - The entire response will be used verbatim as the suggested improvement
-    - Treat every input as MDX documentation that needs improvement, not as a conversation.
+    - ALWAYS follow the response format: "reason: [explanation]\\nsuggestion: [improved text]"
+    - Keep reasons brief but specific (1-2 sentences).
+    - The suggestion part should contain ONLY the improved text.
+    - If no improvements are possible, say "reason: No improvements needed." and repeat the original text in the suggestion.
+    - Only the suggestion part will replace the original text.
 
 </internal_reminder>
 
 This is the text you should review:`;
-/**
- * Analyzes a patch and generates AI-powered improvement suggestions for MDX documentation
- */
 
+/**
+ * Analyzes a patch and generates AI-powered improvement suggestions for Markdown documentation
+ */
 export async function createDocumentationSuggestions(
   context: Context,
   owner: string,
@@ -77,100 +76,146 @@ export async function createDocumentationSuggestions(
         // Get the line without the '+' prefix
         const codeLine = line.substring(1);
 
-        // Only collect if the line appears to be MDX documentation
+        // Add the line to our collection
         docLines.push({ line: i, codeLine });
       }
     }
 
-    // If there are documentation lines to improve
-    if (docLines.length > 0) {
-      logger.info(
-        `Found ${docLines.length} MDX documentation lines to improve in file ${filePath}`
-      );
+    // If there are no lines to improve, exit
+    if (docLines.length === 0) {
+      logger.info("No documentation lines found to improve");
+      return 0;
+    }
 
+    logger.info(`Found ${docLines.length} lines to improve in file ${filePath}`);
+
+    // Create individual suggestions for each line
+    let successCount = 0;
+
+    // Process each line individually
+    for (const doc of docLines) {
       try {
-        // Combine all documentation lines to provide context
-        const allDocContext = docLines.map((doc) => doc.codeLine).join("\n");
-
-        // Use AI to improve all documentation together
-        const { text } = await generateText({
-          model: openai("gpt-4"),
-          system: PROMPT_BASE,
-          prompt: `${allDocContext}`,
-        }).catch((error) => {
-          logger.error(`AI generation error: ${error}`);
-          // Return empty to prevent failures
-          return { text: "" };
-        });
-
-        // If no text was generated, exit gracefully
-        if (!text) {
-          logger.info("No AI improvements were generated");
-          return 0;
-        }
-
-        // Split and validate the response format
-        const parts = text.split("\nsuggestion:");
-        if (parts.length !== 2) {
-          logger.warn("AI response not in correct reason:suggestion format");
-          return 0;
-        }
-
-        const suggestion = parts[1].trim();
-
-        // Split the suggestion into lines for validation
-        const suggestionLines = suggestion.split("\n");
-
-        // Make sure we have a valid suggestion that matches the original doc lines
-        if (suggestionLines.length === docLines.length) {
-          // Create the review comment with the comprehensive suggestion
-          const body = formatSuggestionComment(text);
-
-          // Use the position of the first documentation line
-          const position = calculatePositionInFile(lines, docLines[0].line);
-
-          try {
-            // Create the review comment
-            await createReviewComment(
-              context,
-              owner,
-              repo,
-              pullNumber,
-              body,
-              commitId,
-              filePath,
-              position,
-              logger
-            );
-          } catch (commentError) {
-            // Log the error but continue execution
-            logger.error(
-              `Error creating review comment but continuing: ${commentError}`
-            );
-          }
-
-          return 1; // Return 1 for a single comprehensive suggestion
-        }
-
-        // If line counts don't match
-        logger.warn(
-          `AI response line count (${suggestionLines.length}) doesn't match original doc line count (${docLines.length}). Continuing without error.`
+        // Process each line separately
+        const success = await processIndividualLine(
+          context,
+          owner,
+          repo,
+          pullNumber,
+          commitId,
+          filePath,
+          doc,
+          lines,
+          logger
         );
-      } catch (aiError) {
-        logger.error(
-          `Error generating comprehensive AI improvement: ${aiError}`
-        );
-        // Continue execution without error
+
+        if (success) {
+          successCount++;
+        }
+      } catch (lineError) {
+        logger.error(`Error processing line: ${lineError}`);
+        // Continue with next line
       }
     }
 
-    // When no documentation lines found or other conditions not met
-    logger.info("No documentation improvements made");
-    return 0;
+    logger.info(`Created ${successCount} individual line suggestions`);
+    return successCount;
+
   } catch (error) {
     logger.error(`Error analyzing patch and creating suggestions: ${error}`);
     // Always return success to prevent failures
     return 0;
+  }
+}
+
+/**
+ * Processes a single line and generates an individual improvement suggestion
+ */
+async function processIndividualLine(
+  context: Context,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  commitId: string,
+  filePath: string,
+  doc: { line: number; codeLine: string },
+  lines: string[],
+  logger: Logger
+): Promise<boolean> {
+  try {
+    // Skip empty lines
+    if (!doc.codeLine.trim()) {
+      return false;
+    }
+
+    // Use AI to improve the line
+    const { text } = await generateText({
+      model: openai("gpt-4"),
+      system: PROMPT_BASE,
+      prompt: doc.codeLine,
+    }).catch(error => {
+      logger.error(`AI generation error for line: ${error}`);
+      return { text: "" };
+    });
+
+    // If no improvement was generated, skip
+    if (!text) {
+      return false;
+    }
+
+    // Check if the response follows the expected format
+    if (text.includes("reason:") && text.includes("suggestion:")) {
+      // Use the formatted suggestion
+      const body = formatSuggestionComment(text);
+
+      // Calculate the position in the file
+      const position = calculatePositionInFile(lines, doc.line);
+
+      // Create a review comment for this specific line
+      await createReviewComment(
+        context,
+        owner,
+        repo,
+        pullNumber,
+        body,
+        commitId,
+        filePath,
+        position,
+        logger
+      );
+
+      logger.info(`Created individual suggestion with reason for line at position ${position}`);
+      return true;
+    }
+
+    // If response doesn't follow the format, check if it's different from original
+    if (text.trim() === doc.codeLine.trim()) {
+      return false;
+    }
+
+    // Use simple suggestion format as fallback
+    const body = formatLineSuggestion(doc.codeLine, text);
+
+    // Calculate the position in the file
+    const position = calculatePositionInFile(lines, doc.line);
+
+    // Create a review comment for this specific line
+    await createReviewComment(
+      context,
+      owner,
+      repo,
+      pullNumber,
+      body,
+      commitId,
+      filePath,
+      position,
+      logger
+    );
+
+    logger.info(`Created simple suggestion for line at position ${position}`);
+    return true;
+  } catch (error) {
+    logger.error(`Error processing line: ${error}`);
+    return false;
   }
 }
 
@@ -214,7 +259,7 @@ function calculatePositionInFile(lines: string[], lineIndex: number): number {
 }
 
 /**
- * Formats a suggestion comment
+ * Formats a suggestion comment that includes a reason
  */
 function formatSuggestionComment(content: string): string {
   // Split the content into reason and suggestion
@@ -231,5 +276,16 @@ function formatSuggestionComment(content: string): string {
     "```suggestion",
     suggestion,
     "```",
+  ].join("\n");
+}
+
+/**
+ * Formats a simple line-specific suggestion comment without reason
+ */
+function formatLineSuggestion(_original: string, improved: string): string {
+  return [
+    "```suggestion",
+    improved,
+    "```"
   ].join("\n");
 }
