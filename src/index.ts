@@ -18,75 +18,98 @@ export default (app: Probot) => {
   app.on("pull_request.synchronize", async (context) => {
     app.log.info("Received pull_request.synchronize event");
 
-    // Extract basic PR information
-    const repo = context.payload.repository;
-    const prNumber = context.payload.pull_request.number;
-    const beforeSha = context.payload.before;
-    const afterSha = context.payload.after;
-    const owner = repo.owner.login;
-
-    app.log.info(`PR #${prNumber} in ${repo.full_name} was synchronized`);
-    app.log.info(`Changed from ${beforeSha} to ${afterSha}`);
-
     try {
-      // Fetch commits in this PR
-      const commits = await getCommitsInPR(
-        context,
-        owner,
-        repo.name,
-        prNumber,
-        app.log
-      );
+      // Extract basic PR information
+      const repo = context.payload.repository;
+      const prNumber = context.payload.pull_request.number;
+      const beforeSha = context.payload.before;
+      const afterSha = context.payload.after;
+      const owner = repo.owner.login;
 
-      // Process only the last commit instead of all commits
-      if (commits.length > 0) {
-        const lastCommit = commits[commits.length - 1];
+      app.log.info(`PR #${prNumber} in ${repo.full_name} was synchronized`);
+      app.log.info(`Changed from ${beforeSha} to ${afterSha}`);
 
-        app.log.info(`Processing only the last commit: ${lastCommit.sha}`);
-        app.log.info(`Author: ${lastCommit.commit.author?.name || 'Unknown'}`);
-        app.log.info(`Message: ${lastCommit.commit.message || 'No message'}`);
-
-        // Get detailed changes for this commit
-        const commitDetails = await getCommitDetails(
+      try {
+        // Fetch commits in this PR
+        const commits = await getCommitsInPR(
           context,
           owner,
           repo.name,
-          lastCommit.sha,
+          prNumber,
           app.log
-        );
+        ).catch(error => {
+          app.log.error(`Error fetching commits, but continuing: ${error}`);
+          return [];
+        });
 
-        // Create suggestions for each modified file
-        if (commitDetails?.files) {
-          for (const file of commitDetails.files as CommitFile[]) {
-            if (file.patch) {
-              await createDocumentationSuggestions(
-                context,
-                owner,
-                repo.name,
-                prNumber,
-                lastCommit.sha,
-                file.filename,
-                file.patch,
-                app.log
-              );
+        // Process only the last commit instead of all commits
+        if (commits.length > 0) {
+          const lastCommit = commits[commits.length - 1];
+
+          app.log.info(`Processing only the last commit: ${lastCommit.sha}`);
+          app.log.info(`Author: ${lastCommit.commit.author?.name || 'Unknown'}`);
+          app.log.info(`Message: ${lastCommit.commit.message || 'No message'}`);
+
+          // Get detailed changes for this commit
+          const commitDetails = await getCommitDetails(
+            context,
+            owner,
+            repo.name,
+            lastCommit.sha,
+            app.log
+          ).catch(error => {
+            app.log.error(`Error getting commit details, but continuing: ${error}`);
+            return null;
+          });
+
+          // Create suggestions for each modified file
+          if (commitDetails?.files) {
+            for (const file of commitDetails.files as CommitFile[]) {
+              try {
+                if (file.patch) {
+                  await createDocumentationSuggestions(
+                    context,
+                    owner,
+                    repo.name,
+                    prNumber,
+                    lastCommit.sha,
+                    file.filename,
+                    file.patch,
+                    app.log
+                  ).catch(error => {
+                    app.log.error(`Error creating suggestions, but continuing: ${error}`);
+                    return 0;
+                  });
+                }
+              } catch (fileError) {
+                // Continue to next file even if one fails
+                app.log.error(`Error processing file ${file.filename}: ${fileError}`);
+              }
             }
           }
+        } else {
+          app.log.info("No commits found in this PR");
         }
-      } else {
-        app.log.info("No commits found in this PR");
-      }
 
-      // Compare base and head commits
-      await compareCommits(
-        context,
-        owner,
-        repo.name,
-        beforeSha,
-        afterSha,
-        app.log
-      );
-    } catch (error) {
-      app.log.error(`Error processing PR synchronize event: ${error}`);
+        // Compare base and head commits
+        await compareCommits(
+          context,
+          owner,
+          repo.name,
+          beforeSha,
+          afterSha,
+          app.log
+        ).catch(error => {
+          app.log.error(`Error comparing commits, but continuing: ${error}`);
+          return null;
+        });
+      } catch (innerError) {
+        // Log but don't throw so the event handler completes
+        app.log.error(`Error in PR processing workflow: ${innerError}`);
+      }
+    } catch (outerError) {
+      // Catch-all for any unexpected errors to prevent the app from crashing
+      app.log.error(`Unexpected error in event handler: ${outerError}`);
     }
   });
 };
