@@ -64,6 +64,7 @@ const PROMPT_BASE = `<internal_reminder>
     - Address the specific issues in the content while maintaining original intent.
     - Consider the CONTEXT of the entire document when making suggestions.
     - Ensure the suggestion flows naturally with surrounding content.
+
 5. <forming_correct_responses>
     - ALWAYS follow the response format: "reason: [explanation]\\nsuggestion: [improved text]"
     - Keep reasons brief but specific (1-2 sentences).
@@ -71,12 +72,6 @@ const PROMPT_BASE = `<internal_reminder>
     - If no improvements are possible, say "reason: No improvements needed." and repeat the original text in the suggestion.
     - Only the suggestion part will replace the original text.
     - Focus your suggestion ONLY on the TARGET LINE.
-6. <custom_rules>
-    IMPORTANT: Custom rules have the HIGHEST PRIORITY and OVERRIDE all other guidelines.
-    If a custom rule conflicts with any other guideline above, the custom rule ALWAYS takes precedence.
-    Note: Custom rules may be empty. If no custom rules are provided, follow only the base guidelines above.
-    
-    CUSTOM_RULES
 
 </internal_reminder>
 
@@ -85,6 +80,43 @@ FULL_DOCUMENT_CONTEXT
 
 Here is the specific line you should improve:
 TARGET_LINE`;
+
+const CUSTOM_RULES_PROMPT = `You are a documentation custom rules enforcer. Your task is to modify the given documentation suggestion to strictly follow the provided custom rules.
+
+⚠️ CRITICAL PRIORITY WARNING ⚠️
+
+CUSTOM RULES ARE ABSOLUTE LAW and MUST be followed WITHOUT EXCEPTION.
+
+Input format:
+1. Original suggestion in format: "reason: [explanation]\\nsuggestion: [text]"
+2. Custom rules in structured format
+
+Output requirements:
+1. MUST maintain the exact same format: "reason: [explanation]\\nsuggestion: [text]"
+2. PRESERVE the original reason and add "Custom rules were applied" at the end
+3. MUST apply ALL custom rules to the suggestion
+4. Custom rules OVERRIDE any previous formatting or style
+5. If custom rules conflict with the original suggestion's style, custom rules ALWAYS win
+6. NO COMPROMISES, NO INTERPRETATIONS - apply rules exactly as specified
+
+Example input:
+Original:
+reason: Improved clarity and structure
+suggestion: The function processes user input efficiently.
+
+Custom rules:
+- TONE: Be sarcastic
+- STYLE: Use emojis
+
+Example output:
+reason: Improved clarity and structure. Custom rules were applied
+suggestion: Oh wow, look at this *amazing* function that processes user input "efficiently" 🙄✨
+
+Now apply the custom rules to the following suggestion:
+ORIGINAL_SUGGESTION
+
+Custom rules to apply:
+CUSTOM_RULES`;
 
 /**
  * Analyzes a patch and generates AI-powered improvement suggestions for Markdown documentation
@@ -264,11 +296,9 @@ async function processIndividualLine(
       return false;
     }
 
-    // Prepare the prompt with context if available
+    // Step 1: Generate initial suggestion with PROMPT_BASE
     let prompt = doc.codeLine;
-
     if (fileContent) {
-      // Replace placeholders in the base prompt
       const promptWithContext = PROMPT_BASE.replace(
         "FULL_DOCUMENT_CONTEXT",
         fileContent
@@ -276,61 +306,72 @@ async function processIndividualLine(
       prompt = promptWithContext;
     }
 
+    // First generateText call with base prompt
+    const initialResult = await generateText({
+      model: openai("gpt-4o-mini"),
+      system: fileContent ? "" : PROMPT_BASE,
+      prompt: prompt,
+    }).catch(error => {
+      logger.error(`Initial AI generation error: ${error}`);
+      return { text: "" };
+    });
+
+    if (!initialResult.text) {
+      return false;
+    }
+
+    let finalText = 
+    initialResult.text;
+
+    // Step 2: Search for custom rules
     try {
       logger.info(`Getting custom rules for ${authorEmail}`);
       const customRules = await axios.get<CustomRulesResponse>(
         "https://api.sheety.co/8e7fca93247a01053ea6b43066d2a3aa/customRules/data"
       );
-      logger.info(`authorEmail: ${authorEmail}`);
+
+      // Step 3: If has custom rules, apply them with a second generateText call
       if (customRules?.data?.data) {
-        const ownerCustomRules = customRules?.data.data.find(
+        const ownerCustomRules = customRules.data.data.find(
           (rule) => rule.email === authorEmail
         );
-        logger.info(`Owner custom rules: ${ownerCustomRules}`);
+
         if (ownerCustomRules?.rules) {
+          // Format the custom rules
           const formattedRules = await formatCustomRules(
             ownerCustomRules.rules,
             logger
           );
-          logger.info(`Formatted custom rules: ${formattedRules}`);
+
           if (formattedRules) {
-            prompt = prompt.replace("CUSTOM_RULES", formattedRules);
-          } else {
-            prompt = prompt.replace("CUSTOM_RULES", "");
+            // Second generateText call to apply custom rules
+            const customRulesPrompt = CUSTOM_RULES_PROMPT
+              .replace("ORIGINAL_SUGGESTION", initialResult.text)
+              .replace("CUSTOM_RULES", formattedRules);
+
+            const customizedResult = await generateText({
+              model: openai("gpt-4o-mini"),
+              system: "",
+              prompt: customRulesPrompt,
+            }).catch(error => {
+              logger.error(`Custom rules application error: ${error}`);
+              return { text: initialResult.text }; // Fallback to initial result
+            });
+
+            finalText = customizedResult.text || initialResult.text;
           }
-        } else {
-          prompt = prompt.replace("CUSTOM_RULES", "");
         }
       }
     } catch (error) {
-      logger.error(`Error getting custom rules: ${error}`);
-      prompt = prompt.replace("CUSTOM_RULES", "No custom rules provided.");
+      logger.error(`Error getting/applying custom rules: ${error}`);
+      // Continue with initial result if custom rules fail
     }
 
-    // Use AI to improve the line
-    const { text } = await generateText({
-      model: openai("gpt-4o-mini"),
-      system: fileContent ? "" : PROMPT_BASE, // Only use the system prompt if we're not using context
-      prompt: prompt,
-    }).catch(error => {
-      logger.error(`AI generation error for line: ${error}`);
-      return { text: "" };
-    });
-
-    // If no improvement was generated, skip
-    if (!text) {
-      return false;
-    }
-
-    // Check if the response follows the expected format
-    if (text.includes("reason:") && text.includes("suggestion:")) {
-      // Use the formatted suggestion
-      const body = formatSuggestionComment(text);
-
-      // Calculate the position in the file
+    // Check if the final response follows the expected format
+    if (finalText.includes("reason:") && finalText.includes("suggestion:")) {
+      const body = formatSuggestionComment(finalText);
       const position = calculatePositionInFile(lines, doc.line);
 
-      // Create a review comment for this specific line
       await createReviewComment(
         context,
         owner,
@@ -344,23 +385,20 @@ async function processIndividualLine(
       );
 
       logger.info(
-        `Created individual suggestion with reason for line at position ${position}`
+        `Created suggestion with reason for line at position ${position}`
       );
       return true;
     }
 
-    // If response doesn't follow the format, check if it's different from original
-    if (text.trim() === doc.codeLine.trim()) {
+    // If response doesn't follow format, check if it's different from original
+    if (finalText.trim() === doc.codeLine.trim()) {
       return false;
     }
 
     // Use simple suggestion format as fallback
-    const body = formatLineSuggestion(doc.codeLine, text);
-
-    // Calculate the position in the file
+    const body = formatLineSuggestion(doc.codeLine, finalText);
     const position = calculatePositionInFile(lines, doc.line);
 
-    // Create a review comment for this specific line
     await createReviewComment(
       context,
       owner,
