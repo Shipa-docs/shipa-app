@@ -1,12 +1,23 @@
 FROM node:20-slim
 WORKDIR /usr/src/app
-COPY package.json package-lock.json ./
-# Instalar todas las dependencias para poder compilar
+
+# Copiar archivos de configuración y dependencias
+COPY package.json package-lock.json tsconfig.json ./
+
+# Copiar el código fuente
+COPY src/ ./src
+
+# Instalar dependencias
 RUN npm ci
-# Ejecutar el build (asegúrate de que el script "build" esté definido en package.json)
+
+# Ejecutar el build (compila TypeScript y genera la carpeta lib)
 RUN npm run build
-# Si quieres limpiar devDependencies, puedes hacerlo en una etapa separada o usar otras estrategias
+
+# Establecer el entorno de producción
 ENV NODE_ENV="production"
-# Copiar el resto del código (incluida la carpeta generada lib)
-COPY . .
+
+# Si tienes otros archivos (como .env, etc.) que necesites, puedes copiarlos aquí
+# COPY . .
+
+# Iniciar la aplicación
 CMD [ "npm", "start" ]
