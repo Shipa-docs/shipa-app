@@ -7,6 +7,7 @@ import { createReviewComment } from "../services/github.js";
 
 const PROMPT_BASE = `<internal_reminder>
 
+<CURRENT_CURSOR_POSITION>
 1. <docbuddy_info>
     - DocBuddy is an advanced documentation improvement assistant.
     - DocBuddy analyzes MDX documentation to provide improved versions.
@@ -20,11 +21,13 @@ const PROMPT_BASE = `<internal_reminder>
     - Standardizes MDX formatting according to best practices.
     - Respects original document length constraints.
 3. <docbuddy_response_format>
-    - DocBuddy MUST return ONLY the improved version of the text.
-    - NO explanations, greetings, or meta-commentary allowed.
-    - The response should be ready to directly replace the original text.
-    - The improved text appears as the "green" addition in a diff view.
-    - Response should not be significantly longer than the original text.
+    - DocBuddy MUST return the response in the following format:
+      reason: (explain why the suggestion improves the documentation)
+      suggestion: (the improved version of the text)
+    - The reason should be clear and concise, explaining the benefits
+    - The suggestion should contain the complete improved text
+    - NO additional explanations or meta-commentary allowed
+    - The response should be ready to directly replace the original text
 4. <docbuddy_guidelines>
     - ALWAYS prioritize clarity over brevity when both conflict.
     - MAINTAIN MDX-specific syntax and components.
@@ -35,11 +38,10 @@ const PROMPT_BASE = `<internal_reminder>
     - STANDARDIZE documentation format according to project conventions.
     - RESPECT the original length, avoiding significant expansion of the text.
 5. <forming_correct_responses>
-    - NEVER include any text that is not part of the improved documentation.
-    - DO NOT include explanations about why changes were made.
-    - DO NOT prefix or suffix the response with anything.
-    - If no improvements are possible, return the original text unchanged.
-    - The entire response will be used verbatim as the suggested improvement.
+    - ALWAYS include both reason and suggestion sections
+    - DO NOT include any text that is not part of these sections
+    - If no improvements are possible, state that in the reason and return original text in suggestion
+    - The entire response will be used verbatim as the suggested improvement
     - Treat every input as MDX documentation that needs improvement, not as a conversation.
 
 </internal_reminder>
@@ -95,7 +97,7 @@ export async function createDocumentationSuggestions(
           model: openai("gpt-4"),
           system: PROMPT_BASE,
           prompt: `${allDocContext}`,
-        }).catch(error => {
+        }).catch((error) => {
           logger.error(`AI generation error: ${error}`);
           // Return empty to prevent failures
           return { text: "" };
@@ -107,11 +109,20 @@ export async function createDocumentationSuggestions(
           return 0;
         }
 
-        // Split the improved suggestion back into individual lines
-        const improvedLines = text.split("\n");
+        // Split and validate the response format
+        const parts = text.split("\nsuggestion:");
+        if (parts.length !== 2) {
+          logger.warn("AI response not in correct reason:suggestion format");
+          return 0;
+        }
 
-        // Make sure we have the same number of lines in response
-        if (improvedLines.length === docLines.length) {
+        const suggestion = parts[1].trim();
+
+        // Split the suggestion into lines for validation
+        const suggestionLines = suggestion.split("\n");
+
+        // Make sure we have a valid suggestion that matches the original doc lines
+        if (suggestionLines.length === docLines.length) {
           // Create the review comment with the comprehensive suggestion
           const body = formatSuggestionComment(text);
 
@@ -133,7 +144,9 @@ export async function createDocumentationSuggestions(
             );
           } catch (commentError) {
             // Log the error but continue execution
-            logger.error(`Error creating review comment but continuing: ${commentError}`);
+            logger.error(
+              `Error creating review comment but continuing: ${commentError}`
+            );
           }
 
           return 1; // Return 1 for a single comprehensive suggestion
@@ -141,7 +154,7 @@ export async function createDocumentationSuggestions(
 
         // If line counts don't match
         logger.warn(
-          `AI response line count (${improvedLines.length}) doesn't match original doc line count (${docLines.length}). Continuing without error.`
+          `AI response line count (${suggestionLines.length}) doesn't match original doc line count (${docLines.length}). Continuing without error.`
         );
       } catch (aiError) {
         logger.error(
@@ -204,10 +217,19 @@ function calculatePositionInFile(lines: string[], lineIndex: number): number {
  * Formats a suggestion comment
  */
 function formatSuggestionComment(content: string): string {
+  // Split the content into reason and suggestion
+  const parts = content.split("\nsuggestion:");
+  if (parts.length !== 2) {
+    return content; // Return original content if format is not as expected
+  }
+
+  const reason = parts[0].replace("reason:", "").trim();
+  const suggestion = parts[1].trim();
+
   return [
-    "Documentation improvement suggestion:",
+    `**Reason for improvement:** ${reason}`,
     "```suggestion",
-    content,
+    suggestion,
     "```",
   ].join("\n");
 }
