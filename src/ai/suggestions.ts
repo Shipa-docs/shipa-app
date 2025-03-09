@@ -74,17 +74,43 @@ export async function createDocumentationSuggestions(
     // Collect all documentation lines and their positions
     const docLines: { line: number; codeLine: string }[] = [];
 
+    // Keep track of deleted lines (lines that start with '-')
+    const deletedLineNums = new Set<number>();
+
     // Process each line in the patch to identify documentation
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+
+      // Track deleted lines
+      if (line.startsWith("-") && !line.startsWith("---")) {
+        // Calculate the actual line number from the patch
+        const position = calculatePositionInFile(lines, i);
+        deletedLineNums.add(position);
+      }
 
       // Look for lines that start with '+' (added/modified) but not metadata lines (+++/---)
       if (line.startsWith("+") && !line.startsWith("+++")) {
         // Get the line without the '+' prefix
         const codeLine = line.substring(1);
 
-        // Add the line to our collection
-        docLines.push({ line: i, codeLine });
+        // Calculate the position to check if this is replacing a deleted line
+        const position = calculatePositionInFile(lines, i);
+
+        // If the line is not empty and either:
+        // 1. It's a brand new line (not replacing a deleted line), or
+        // 2. It's replacing a deleted line with new content
+        // Then add it for processing
+        if (codeLine.trim() && !deletedLineNums.has(position)) {
+          // Add the line to our collection - this is a new line
+          docLines.push({ line: i, codeLine });
+        } else if (codeLine.trim() && deletedLineNums.has(position)) {
+          // This is replacing a deleted line with new content
+          docLines.push({ line: i, codeLine });
+          // Remove from deleted lines set as it's now replaced
+          deletedLineNums.delete(position);
+        }
+        // If the line is empty or just whitespace and it's replacing a deleted line,
+        // we don't add it to docLines (we don't want to suggest for a deleted line)
       }
     }
 
