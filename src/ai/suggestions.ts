@@ -45,8 +45,9 @@ const PROMPT_BASE = `<internal_reminder>
     - Provides specific and actionable suggestions for each paragraph.
 
 3. <docbuddy_response_format>
-    - DocBuddy MUST return responses in the format: "reason: [REASON WHY THE CHANGE IS NEEDED]\nsuggestion: [IMPROVED TEXT]"
-    - The "reason" should briefly explain the improvement in a professional manner.
+    - DocBuddy MUST return responses in the format: "reason: [REASON WHY THE CHANGE IS NEEDED]\\nsuggestion: [IMPROVED TEXT]"
+    - The reason should briefly explain the improvement.
+    - The suggestion should be the improved version of the text only.
     - Both parts are required in this exact format.
     - Example:
       reason: The sentence is fragmented and unclear.
@@ -64,7 +65,7 @@ const PROMPT_BASE = `<internal_reminder>
     - Consider the CONTEXT of the entire document when making suggestions.
     - Ensure the suggestion flows naturally with surrounding content.
 5. <forming_correct_responses>
-    - ALWAYS follow the response format: "reason: [explanation]\nsuggestion: [improved text]"
+    - ALWAYS follow the response format: "reason: [explanation]\\nsuggestion: [improved text]"
     - Keep reasons brief but specific (1-2 sentences).
     - The suggestion part should contain ONLY the improved text.
     - If no improvements are possible, say "reason: No improvements needed." and repeat the original text in the suggestion.
