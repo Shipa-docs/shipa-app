@@ -73,6 +73,7 @@ export default (app: Probot) => {
 
           // Create suggestions for each modified file
           if (commitDetails?.files) {
+            const authorEmail = lastCommit.commit.author?.email || '';
             for (const file of commitDetails.files as CommitFile[]) {
               try {
                 if (file.patch) {
@@ -85,7 +86,7 @@ export default (app: Probot) => {
                     file.filename,
                     file.patch,
                     app.log,
-                    true // Enable sarcasm mode by default
+                    authorEmail
                   ).catch(error => {
                     app.log.error(`Error creating suggestions, but continuing: ${error}`);
                     return 0;

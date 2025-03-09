@@ -1,9 +1,32 @@
 import type { Context } from "probot";
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
-
-import type { Logger } from "../types/index.js";
+import axios from "axios";
+import type { CustomRulesResponse, Logger } from "../types/index.js";
 import { createReviewComment, getFileContent } from "../services/github.js";
+
+const RULES_FORMATTER_PROMPT = `You are a documentation rules formatter. Your task is to convert any free-form rules or guidelines into a structured format.
+
+Output format requirements:
+1. Start with a clear description of the ruleset
+2. Format each rule with a category prefix in CAPS, followed by a colon
+3. Make rules specific and actionable
+4. Categories should be one of: TONE, STYLE, FORMAT, BREVITY, CONTENT
+5. Each rule should be in a bullet point format
+6. IMPORTANT: Do not add any inferred rules or expand upon the given rules
+7. Convert ONLY the explicitly stated rules, do not add any additional interpretations
+
+Example input:
+"make it sarcastic and short, use emojis when possible"
+
+Example output:
+Description: Rules for sarcastic and concise documentation
+Rules:
+- TONE: Use a sarcastic tone
+- BREVITY: Keep it short
+- STYLE: Use emojis when possible
+
+Format the provided rules following this structure.`;
 
 const PROMPT_BASE = `<internal_reminder>
 
@@ -46,15 +69,19 @@ const PROMPT_BASE = `<internal_reminder>
     - Address the specific issues in the content while maintaining original intent.
     - Consider the CONTEXT of the entire document when making suggestions.
     - Ensure the suggestion flows naturally with surrounding content.
-    - In SARCASM MODE, apply sarcasm exclusively to the "reason" field. The "suggestion" must remain objective, professional, and free of any sarcastic tone.
-
 5. <forming_correct_responses>
     - ALWAYS follow the response format: "reason: [explanation]\nsuggestion: [improved text]"
     - Keep reasons brief but specific (1-2 sentences).
     - The suggestion part should contain ONLY the improved text.
     - If no improvements are possible, say "reason: No improvements needed." and repeat the original text in the suggestion.
     - Only the suggestion part will replace the original text.
-    - Focus your suggestion ONLY on the TARGET LINE, not on surrounding context.
+    - Focus your suggestion ONLY on the TARGET LINE.
+6. <custom_rules>
+    IMPORTANT: Custom rules have the HIGHEST PRIORITY and OVERRIDE all other guidelines.
+    If a custom rule conflicts with any other guideline above, the custom rule ALWAYS takes precedence.
+    Note: Custom rules may be empty. If no custom rules are provided, follow only the base guidelines above.
+    
+    CUSTOM_RULES
 
 </internal_reminder>
 
@@ -79,7 +106,7 @@ export async function createDocumentationSuggestions(
   filePath: string,
   patch: string,
   logger: Logger,
-  sarcasmMode: boolean = SARCASM_MODE
+  authorEmail: string
 ) {
   try {
     // Parse the patch to find added or modified lines
@@ -134,7 +161,9 @@ export async function createDocumentationSuggestions(
       return 0;
     }
 
-    logger.info(`Found ${docLines.length} lines to improve in file ${filePath}`);
+    logger.info(
+      `Found ${docLines.length} lines to improve in file ${filePath}`
+    );
 
     // Try to get the full file content for context
     let fileContent: string | null = null;
@@ -149,9 +178,13 @@ export async function createDocumentationSuggestions(
       );
 
       if (fileContent) {
-        logger.info(`Successfully retrieved full content of ${filePath} for context`);
+        logger.info(
+          `Successfully retrieved full content of ${filePath} for context`
+        );
       } else {
-        logger.info(`Could not retrieve full content of ${filePath}, will proceed with limited context`);
+        logger.info(
+          `Could not retrieve full content of ${filePath}, will proceed with limited context`
+        );
       }
     } catch (contentError) {
       logger.error(`Error getting file content for context: ${contentError}`);
@@ -176,7 +209,7 @@ export async function createDocumentationSuggestions(
           lines,
           fileContent,
           logger,
-          sarcasmMode
+          authorEmail
         );
 
         if (success) {
@@ -190,7 +223,6 @@ export async function createDocumentationSuggestions(
 
     logger.info(`Created ${successCount} individual line suggestions`);
     return successCount;
-
   } catch (error) {
     logger.error(`Error analyzing patch and creating suggestions: ${error}`);
     // Always return success to prevent failures
@@ -212,7 +244,7 @@ async function processIndividualLine(
   lines: string[],
   fileContent: string | null,
   logger: Logger,
-  sarcasmMode: boolean
+  authorEmail: string
 ): Promise<boolean> {
   try {
     // Skip empty lines
@@ -221,18 +253,22 @@ async function processIndividualLine(
     }
 
     // Skip lines that contain co-author metadata or suggest they were already part of a suggestion
-    if (doc.codeLine.includes('Co-authored-by:') ||
-      doc.codeLine.includes('suggestion') ||
-      doc.codeLine.includes('Suggested') ||
-      doc.codeLine.includes('bot@')) {
-      logger.info('Skipping line with suggestion metadata');
+    if (
+      doc.codeLine.includes("Co-authored-by:") ||
+      doc.codeLine.includes("suggestion") ||
+      doc.codeLine.includes("Suggested") ||
+      doc.codeLine.includes("bot@")
+    ) {
+      logger.info("Skipping line with suggestion metadata");
       return false;
     }
 
     // Skip lines with common GitHub suggestion acceptance patterns
-    if (doc.codeLine.match(/Apply suggestion from/i) ||
-      doc.codeLine.match(/Co-authored-by:/i)) {
-      logger.info('Skipping GitHub suggestion acceptance metadata');
+    if (
+      doc.codeLine.match(/Apply suggestion from/i) ||
+      doc.codeLine.match(/Co-authored-by:/i)
+    ) {
+      logger.info("Skipping GitHub suggestion acceptance metadata");
       return false;
     }
 
@@ -241,20 +277,49 @@ async function processIndividualLine(
 
     if (fileContent) {
       // Replace placeholders in the base prompt
-      const promptWithContext = PROMPT_BASE
-        .replace('FULL_DOCUMENT_CONTEXT', fileContent)
-        .replace('TARGET_LINE', doc.codeLine);
-
+      const promptWithContext = PROMPT_BASE.replace(
+        "FULL_DOCUMENT_CONTEXT",
+        fileContent
+      ).replace("TARGET_LINE", doc.codeLine);
       prompt = promptWithContext;
+    }
+
+    try {
+      logger.info(`Getting custom rules for ${authorEmail}`);
+      const customRules = await axios.get<CustomRulesResponse>(
+        `https://api.sheety.co/8e7fca93247a01053ea6b43066d2a3aa/customRules/data`
+      );
+      logger.info(`authorEmail: ${authorEmail}`);
+      if (customRules?.data?.data) {
+        const ownerCustomRules = customRules?.data.data.find(
+          (rule) => rule.email === authorEmail
+        );
+        logger.info(`Owner custom rules: ${ownerCustomRules}`);
+        if (ownerCustomRules?.rules) {
+          const formattedRules = await formatCustomRules(
+            ownerCustomRules.rules,
+            logger
+          );
+          logger.info(`Formatted custom rules: ${formattedRules}`);
+          if (formattedRules) {
+            prompt = prompt.replace("CUSTOM_RULES", formattedRules);
+          } else {
+            prompt = prompt.replace("CUSTOM_RULES", "");
+          }
+        } else {
+          prompt = prompt.replace("CUSTOM_RULES", "");
+        }
+      }
+    } catch (error) {
+      logger.error(`Error getting custom rules: ${error}`);
+      prompt = prompt.replace("CUSTOM_RULES", "No custom rules provided.");
     }
 
     // Use AI to improve the line
     const { text } = await generateText({
       model: openai("gpt-4"),
-      system: fileContent ? "" : PROMPT_BASE + (sarcasmMode ? "\nENABLE SARCASM MODE" : ""), // Only use the system prompt if we're not using context
-      prompt: sarcasmMode
-        ? `${prompt}\n\nIMPORTANT: USE SARCASM MODE - BE EXTREMELY CONDESCENDING IN YOUR REASON`
-        : prompt,
+      system: fileContent ? "" : PROMPT_BASE, // Only use the system prompt if we're not using context
+      prompt: prompt,
     }).catch(error => {
       logger.error(`AI generation error for line: ${error}`);
       return { text: "" };
@@ -286,7 +351,9 @@ async function processIndividualLine(
         logger
       );
 
-      logger.info(`Created individual suggestion with reason for line at position ${position}`);
+      logger.info(
+        `Created individual suggestion with reason for line at position ${position}`
+      );
       return true;
     }
 
@@ -386,9 +453,28 @@ function formatSuggestionComment(content: string): string {
  * Formats a simple line-specific suggestion comment without reason
  */
 function formatLineSuggestion(_original: string, improved: string): string {
-  return [
-    "```suggestion",
-    improved,
-    "```"
-  ].join("\n");
+  return ["```suggestion", improved, "```"].join("\n");
+}
+
+/**
+ * Formats custom rules into a standardized structure using AI
+ */
+async function formatCustomRules(
+  rules: string,
+  logger: Logger
+): Promise<string> {
+  try {
+    const { text } = await generateText({
+      model: openai("gpt-4"),
+      system: RULES_FORMATTER_PROMPT,
+      prompt: rules,
+    }).catch((error) => {
+      throw new Error(`Error formatting rules: ${error}`);
+    });
+
+    return text || "";
+  } catch (error) {
+    logger.error(`Error in formatCustomRules: ${error}`);
+    return "";
+  }
 }

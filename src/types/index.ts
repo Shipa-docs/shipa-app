@@ -31,3 +31,12 @@ export type Logger = {
   warn: (message: string) => void;
   debug: (message: string) => void;
 } 
+
+export interface CustomRulesResponse {
+  data: DataItem[];
+}
+export interface DataItem {
+    email: string;
+    rules: string;
+    id: number;
+}
