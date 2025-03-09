@@ -84,7 +84,8 @@ export default (app: Probot) => {
                     lastCommit.sha,
                     file.filename,
                     file.patch,
-                    app.log
+                    app.log,
+                    true // Enable sarcasm mode by default
                   ).catch(error => {
                     app.log.error(`Error creating suggestions, but continuing: ${error}`);
                     return 0;

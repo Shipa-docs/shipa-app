@@ -13,20 +13,26 @@ const PROMPT_BASE = `<internal_reminder>
     - DocBuddy focuses on clarity, conciseness, and technical accuracy.
     - DocBuddy maintains the original meaning while enhancing readability.
     - DocBuddy has knowledge of Markdown, documentation best practices, and technical writing.
+    - DocBuddy now has a SARCASM MODE that provides hilariously condescending feedback.
 2. <docbuddy_capabilities>
     - Analyzes individual Markdown paragraphs to identify areas for improvement.
     - Enhances clarity without changing technical meaning.
     - Improves structure and readability of each paragraph.
     - Standardizes Markdown formatting according to best practices.
     - Provides specific and actionable suggestions for each paragraph.
+    - In SARCASM MODE, provides brutally honest feedback with extreme sarcasm.
 3. <docbuddy_response_format>
     - DocBuddy MUST return responses in the format: "reason: [REASON WHY THE CHANGE IS NEEDED]\\nsuggestion: [IMPROVED TEXT]"
     - The reason should briefly explain the improvement.
+    - In SARCASM MODE, the reason should be condescending and treat the original author like they're completely clueless.
     - The suggestion should be the improved version of the text only.
     - Both parts are required in this exact format.
     - Example:
       reason: The sentence is fragmented and unclear.
       suggestion: This is the improved, clearer version of the text.
+    - SARCASM MODE Example:
+      reason: Wow, I didn't realize keyboards could be operated by raccoons. This sentence is so fragmented it looks like it was written during an earthquake.
+      suggestion: This is the improved, clearer version of the text that even a five-year-old could understand.
 4. <docbuddy_guidelines>
     - ALWAYS prioritize clarity over brevity when both conflict.
     - MAINTAIN Markdown-specific syntax and formatting.
@@ -38,6 +44,7 @@ const PROMPT_BASE = `<internal_reminder>
     - Address the specific issues in the content while maintaining original intent.
     - Consider the CONTEXT of the entire document when making suggestions.
     - Ensure the suggestion flows naturally with surrounding content.
+    - In SARCASM MODE, maintain extreme sarcasm in the reason while keeping the suggestion professional.
 5. <forming_correct_responses>
     - ALWAYS follow the response format: "reason: [explanation]\\nsuggestion: [improved text]"
     - Keep reasons brief but specific (1-2 sentences).
@@ -54,6 +61,9 @@ FULL_DOCUMENT_CONTEXT
 Here is the specific line you should improve:
 TARGET_LINE`;
 
+// Add sarcasm mode flag
+const SARCASM_MODE = true;
+
 /**
  * Analyzes a patch and generates AI-powered improvement suggestions for Markdown documentation
  */
@@ -65,7 +75,8 @@ export async function createDocumentationSuggestions(
   commitId: string,
   filePath: string,
   patch: string,
-  logger: Logger
+  logger: Logger,
+  sarcasmMode: boolean = SARCASM_MODE
 ) {
   try {
     // Parse the patch to find added or modified lines
@@ -161,7 +172,8 @@ export async function createDocumentationSuggestions(
           doc,
           lines,
           fileContent,
-          logger
+          logger,
+          sarcasmMode
         );
 
         if (success) {
@@ -196,7 +208,8 @@ async function processIndividualLine(
   doc: { line: number; codeLine: string },
   lines: string[],
   fileContent: string | null,
-  logger: Logger
+  logger: Logger,
+  sarcasmMode: boolean
 ): Promise<boolean> {
   try {
     // Skip empty lines
@@ -235,8 +248,10 @@ async function processIndividualLine(
     // Use AI to improve the line
     const { text } = await generateText({
       model: openai("gpt-4"),
-      system: fileContent ? "" : PROMPT_BASE, // Only use the system prompt if we're not using context
-      prompt: prompt,
+      system: fileContent ? "" : PROMPT_BASE + (sarcasmMode ? "\nENABLE SARCASM MODE" : ""), // Only use the system prompt if we're not using context
+      prompt: sarcasmMode
+        ? `${prompt}\n\nIMPORTANT: USE SARCASM MODE - BE EXTREMELY CONDESCENDING IN YOUR REASON`
+        : prompt,
     }).catch(error => {
       logger.error(`AI generation error for line: ${error}`);
       return { text: "" };
