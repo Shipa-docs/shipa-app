@@ -3,7 +3,7 @@ import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
 import type { Logger } from "../types/index.js";
-import { createReviewComment } from "../services/github.js";
+import { createReviewComment, getFileContent } from "../services/github.js";
 
 const PROMPT_BASE = `<internal_reminder>
 
@@ -36,16 +36,23 @@ const PROMPT_BASE = `<internal_reminder>
     - ENSURE proper Markdown formatting.
     - Make each suggestion SPECIFIC and ACTIONABLE.
     - Address the specific issues in the content while maintaining original intent.
+    - Consider the CONTEXT of the entire document when making suggestions.
+    - Ensure the suggestion flows naturally with surrounding content.
 5. <forming_correct_responses>
     - ALWAYS follow the response format: "reason: [explanation]\\nsuggestion: [improved text]"
     - Keep reasons brief but specific (1-2 sentences).
     - The suggestion part should contain ONLY the improved text.
     - If no improvements are possible, say "reason: No improvements needed." and repeat the original text in the suggestion.
     - Only the suggestion part will replace the original text.
+    - Focus your suggestion ONLY on the TARGET LINE, not on surrounding context.
 
 </internal_reminder>
 
-This is the text you should review:`;
+Here is the full document context (for reference only):
+FULL_DOCUMENT_CONTEXT
+
+Here is the specific line you should improve:
+TARGET_LINE`;
 
 /**
  * Analyzes a patch and generates AI-powered improvement suggestions for Markdown documentation
@@ -89,6 +96,28 @@ export async function createDocumentationSuggestions(
 
     logger.info(`Found ${docLines.length} lines to improve in file ${filePath}`);
 
+    // Try to get the full file content for context
+    let fileContent: string | null = null;
+    try {
+      fileContent = await getFileContent(
+        context,
+        owner,
+        repo,
+        commitId,
+        filePath,
+        logger
+      );
+
+      if (fileContent) {
+        logger.info(`Successfully retrieved full content of ${filePath} for context`);
+      } else {
+        logger.info(`Could not retrieve full content of ${filePath}, will proceed with limited context`);
+      }
+    } catch (contentError) {
+      logger.error(`Error getting file content for context: ${contentError}`);
+      // Continue without full context
+    }
+
     // Create individual suggestions for each line
     let successCount = 0;
 
@@ -105,6 +134,7 @@ export async function createDocumentationSuggestions(
           filePath,
           doc,
           lines,
+          fileContent,
           logger
         );
 
@@ -139,6 +169,7 @@ async function processIndividualLine(
   filePath: string,
   doc: { line: number; codeLine: string },
   lines: string[],
+  fileContent: string | null,
   logger: Logger
 ): Promise<boolean> {
   try {
@@ -159,15 +190,27 @@ async function processIndividualLine(
     // Skip lines with common GitHub suggestion acceptance patterns
     if (doc.codeLine.match(/Apply suggestion from/i) ||
       doc.codeLine.match(/Co-authored-by:/i)) {
-      logger.info(`Skipping GitHub suggestion acceptance metadata`);
+      logger.info('Skipping GitHub suggestion acceptance metadata');
       return false;
+    }
+
+    // Prepare the prompt with context if available
+    let prompt = doc.codeLine;
+
+    if (fileContent) {
+      // Replace placeholders in the base prompt
+      const promptWithContext = PROMPT_BASE
+        .replace('FULL_DOCUMENT_CONTEXT', fileContent)
+        .replace('TARGET_LINE', doc.codeLine);
+
+      prompt = promptWithContext;
     }
 
     // Use AI to improve the line
     const { text } = await generateText({
       model: openai("gpt-4"),
-      system: PROMPT_BASE,
-      prompt: doc.codeLine,
+      system: fileContent ? "" : PROMPT_BASE, // Only use the system prompt if we're not using context
+      prompt: prompt,
     }).catch(error => {
       logger.error(`AI generation error for line: ${error}`);
       return { text: "" };
