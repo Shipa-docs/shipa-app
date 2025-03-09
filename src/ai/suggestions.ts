@@ -147,6 +147,22 @@ async function processIndividualLine(
       return false;
     }
 
+    // Skip lines that contain co-author metadata or suggest they were already part of a suggestion
+    if (doc.codeLine.includes('Co-authored-by:') ||
+      doc.codeLine.includes('suggestion') ||
+      doc.codeLine.includes('Suggested') ||
+      doc.codeLine.includes('bot@')) {
+      logger.info('Skipping line with suggestion metadata');
+      return false;
+    }
+
+    // Skip lines with common GitHub suggestion acceptance patterns
+    if (doc.codeLine.match(/Apply suggestion from/i) ||
+      doc.codeLine.match(/Co-authored-by:/i)) {
+      logger.info(`Skipping GitHub suggestion acceptance metadata`);
+      return false;
+    }
+
     // Use AI to improve the line
     const { text } = await generateText({
       model: openai("gpt-4"),

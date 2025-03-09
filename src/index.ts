@@ -50,6 +50,15 @@ export default (app: Probot) => {
           app.log.info(`Author: ${lastCommit.commit.author?.name || 'Unknown'}`);
           app.log.info(`Message: ${lastCommit.commit.message || 'No message'}`);
 
+          // Check if this commit is a result of an accepted suggestion
+          // Look for "Co-authored-by:" in the commit message which indicates accepted suggestions
+          const commitMessage = lastCommit.commit.message || '';
+          if (commitMessage.includes('Co-authored-by:') &&
+            (commitMessage.includes('bot') || commitMessage.includes('Bot'))) {
+            app.log.info(`Skipping analysis for commit ${lastCommit.sha} as it appears to be from an accepted suggestion`);
+            return;
+          }
+
           // Get detailed changes for this commit
           const commitDetails = await getCommitDetails(
             context,
