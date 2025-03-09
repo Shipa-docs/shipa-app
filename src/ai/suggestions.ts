@@ -91,9 +91,6 @@ FULL_DOCUMENT_CONTEXT
 Here is the specific line you should improve:
 TARGET_LINE`;
 
-// Add sarcasm mode flag
-const SARCASM_MODE = true;
-
 /**
  * Analyzes a patch and generates AI-powered improvement suggestions for Markdown documentation
  */
@@ -287,7 +284,7 @@ async function processIndividualLine(
     try {
       logger.info(`Getting custom rules for ${authorEmail}`);
       const customRules = await axios.get<CustomRulesResponse>(
-        `https://api.sheety.co/8e7fca93247a01053ea6b43066d2a3aa/customRules/data`
+        "https://api.sheety.co/8e7fca93247a01053ea6b43066d2a3aa/customRules/data"
       );
       logger.info(`authorEmail: ${authorEmail}`);
       if (customRules?.data?.data) {
