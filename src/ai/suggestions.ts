@@ -308,7 +308,7 @@ async function processIndividualLine(
 
     // Use AI to improve the line
     const { text } = await generateText({
-      model: openai("gpt-4"),
+      model: openai("gpt-4o-mini"),
       system: fileContent ? "" : PROMPT_BASE, // Only use the system prompt if we're not using context
       prompt: prompt,
     }).catch(error => {
